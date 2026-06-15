@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: kicksgo-meeting-system
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CLOUD_STORAGE_BACKEND
+        value: firebase
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_COLLECTION_PREFIX
+        value: kicksgo_meeting
+      - key: FIREBASE_SERVICE_ACCOUNT_B64
+        sync: false
+      - key: DEFAULT_ADMIN_PASSWORD
+        sync: false
+      - key: DEFAULT_BOSS_PASSWORD
+        sync: false
