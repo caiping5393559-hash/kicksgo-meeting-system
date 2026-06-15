@@ -1,6 +1,9 @@
 data/state.json
 data/transcripts/
 data/*.log
+data/render-env*.txt
+data/*service-account*.json
+data/*firebase*.json
 __pycache__/
 *.pyc
 .env
