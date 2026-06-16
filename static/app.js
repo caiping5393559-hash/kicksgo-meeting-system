@@ -123,6 +123,78 @@ function selectedValues(select) {
   return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
 }
 
+function splitAliasValues(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,，\n\r]/);
+  const values = [];
+  raw.forEach((item) => {
+    const text = String(item || "").trim();
+    if (text && !values.includes(text)) values.push(text);
+  });
+  return values;
+}
+
+function aliasEditorValues(editor) {
+  const hidden = editor?.querySelector('input[type="hidden"]');
+  return splitAliasValues(hidden?.value || "");
+}
+
+function renderAliasEditor(editor) {
+  if (!editor) return;
+  const values = aliasEditorValues(editor);
+  const list = editor.querySelector(".alias-list");
+  if (!list) return;
+  list.innerHTML = values.length
+    ? values.map((value, index) => `
+      <span class="alias-chip">
+        ${escapeHtml(value)}
+        <button type="button" class="alias-remove" data-index="${index}" aria-label="删除 ${escapeHtml(value)}">×</button>
+      </span>
+    `).join("")
+    : '<span class="muted">至少新增一个称呼</span>';
+}
+
+function setAliasEditorValues(form, name, values) {
+  const editor = form?.querySelector(`.alias-editor[data-alias-name="${name}"]`);
+  const hidden = editor?.querySelector(`input[name="${name}"]`);
+  if (!editor || !hidden) return;
+  hidden.value = splitAliasValues(values).join("\n");
+  renderAliasEditor(editor);
+}
+
+function getAliasEditorValues(form, name) {
+  return aliasEditorValues(form?.querySelector(`.alias-editor[data-alias-name="${name}"]`));
+}
+
+function addAliasValue(editor) {
+  if (!editor) return;
+  const input = editor.querySelector(".alias-input");
+  const hidden = editor.querySelector('input[type="hidden"]');
+  const values = aliasEditorValues(editor);
+  splitAliasValues(input?.value || "").forEach((value) => {
+    if (!values.includes(value)) values.push(value);
+  });
+  if (hidden) hidden.value = values.join("\n");
+  if (input) input.value = "";
+  renderAliasEditor(editor);
+}
+
+function removeAliasValue(editor, index) {
+  if (!editor) return;
+  const hidden = editor.querySelector('input[type="hidden"]');
+  const values = aliasEditorValues(editor);
+  values.splice(index, 1);
+  if (hidden) hidden.value = values.join("\n");
+  renderAliasEditor(editor);
+}
+
+function collectPendingAliasInputs(form) {
+  form?.querySelectorAll(".alias-editor").forEach(addAliasValue);
+}
+
+function initAliasEditors(root = document) {
+  root.querySelectorAll(".alias-editor").forEach(renderAliasEditor);
+}
+
 function meetingName(id) {
   const meeting = (app.data?.meetings || []).find((m) => m.id === id);
   return meeting ? meeting.title : id || "";
@@ -155,6 +227,7 @@ function showMessage(target, text, ok = false) {
 function renderAuth() {
   qs("#authView").classList.remove("hidden");
   qs("#appView").classList.add("hidden");
+  initAliasEditors(qs("#authView"));
   renderRegisterBusinessRoles();
 }
 
@@ -719,7 +792,17 @@ function renderAdmin() {
           <label>需要填周报<select name="needs_weekly_report"><option value="false">否</option><option value="true">是</option></select></label>
           <label>有登录账号<select name="has_login"><option value="false">否</option><option value="true">是</option></select></label>
           <label class="field-wide">腾讯会议参会人名，用逗号或换行分隔<textarea name="meeting_aliases" placeholder="例如：Kyle, KYLE, 凯尔"></textarea></label>
-          <label class="field-wide">现实姓名 / 称呼 / 外号，用逗号或换行分隔<textarea name="mention_aliases" placeholder="例如：老陈, 陈总, Kyle, 凯尔"></textarea></label>
+          <div class="alias-label field-wide">
+            <span>现实姓名 / 称呼 / 外号</span>
+            <div class="alias-editor" data-alias-name="mention_aliases">
+              <input type="hidden" name="mention_aliases" />
+              <div class="alias-list"></div>
+              <div class="alias-entry-row">
+                <input class="alias-input" placeholder="输入一个称呼，例如：陈总" />
+                <button type="button" class="plain-btn alias-add">新增</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">保存人员</button>
@@ -810,6 +893,7 @@ function renderAdmin() {
       </div>
     </div>
   `;
+  initAliasEditors(qs("#content"));
   wireAdmin();
 }
 
@@ -861,7 +945,10 @@ function wireAdmin() {
   document.querySelectorAll(".edit-role").forEach((btn) => btn.addEventListener("click", () => fillBusinessRole(btn.dataset.id)));
   document.querySelectorAll(".delete-role").forEach((btn) => btn.addEventListener("click", () => deleteBusinessRole(btn.dataset.id)));
   qs("#personForm").addEventListener("submit", savePerson);
-  qs("#clearPersonBtn").addEventListener("click", () => qs("#personForm").reset());
+  qs("#clearPersonBtn").addEventListener("click", () => {
+    qs("#personForm").reset();
+    setAliasEditorValues(qs("#personForm"), "mention_aliases", []);
+  });
   document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => fillPerson(btn.dataset.id)));
   qs("#linksForm").addEventListener("submit", saveLinks);
   qs("#meetingForm").addEventListener("submit", saveMeeting);
@@ -922,13 +1009,14 @@ async function saveRoleUsers(event) {
 
 async function savePerson(event) {
   event.preventDefault();
+  collectPendingAliasInputs(event.currentTarget);
   const form = new FormData(event.currentTarget);
   const body = Object.fromEntries(form.entries());
   body.attends_weekly = body.attends_weekly === "true";
   body.needs_weekly_report = body.needs_weekly_report === "true";
   body.has_login = body.has_login === "true";
   body.meeting_aliases = String(body.meeting_aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
-  body.mention_aliases = String(body.mention_aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
+  body.mention_aliases = getAliasEditorValues(event.currentTarget, "mention_aliases");
   try {
     await api("/api/admin/save-person", { method: "POST", body });
     await refresh();
@@ -946,6 +1034,7 @@ function fillPerson(id) {
     if (!form.elements[key]) continue;
     form.elements[key].value = Array.isArray(value) ? value.join(", ") : typeof value === "boolean" ? String(value) : value || "";
   }
+  setAliasEditorValues(form, "mention_aliases", p.mention_aliases || []);
   window.scrollTo({ top: form.offsetTop - 20, behavior: "smooth" });
 }
 
@@ -996,11 +1085,27 @@ function fillMeeting(id) {
 }
 
 document.addEventListener("click", (event) => {
+  const addAlias = event.target.closest(".alias-add");
+  if (addAlias) {
+    addAliasValue(addAlias.closest(".alias-editor"));
+    return;
+  }
+  const removeAlias = event.target.closest(".alias-remove");
+  if (removeAlias) {
+    removeAliasValue(removeAlias.closest(".alias-editor"), Number(removeAlias.dataset.index));
+    return;
+  }
   const nav = event.target.closest(".nav-btn");
   if (nav) {
     app.page = nav.dataset.page;
     renderPage();
   }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || !event.target.classList.contains("alias-input")) return;
+  event.preventDefault();
+  addAliasValue(event.target.closest(".alias-editor"));
 });
 
 qs("#loginForm").addEventListener("submit", async (event) => {
@@ -1020,11 +1125,13 @@ qs("#loginForm").addEventListener("submit", async (event) => {
 qs("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
+    collectPendingAliasInputs(event.currentTarget);
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
     const res = await api("/api/register", { method: "POST", body });
     showMessage("#authMessage", res.message || "注册已提交", true);
     event.currentTarget.reset();
+    setAliasEditorValues(event.currentTarget, "mention_aliases", []);
     renderRegisterBusinessRoles();
   } catch (err) {
     showMessage("#authMessage", err.message);

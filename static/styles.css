@@ -84,6 +84,13 @@ label {
   font-size: 13px;
 }
 
+.alias-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 h1,
 h2,
 h3,
@@ -535,6 +542,55 @@ tr:last-child td {
   padding: 6px;
 }
 
+.alias-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.alias-list {
+  display: flex;
+  min-height: 39px;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+}
+
+.alias-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #bfd3e7;
+  border-radius: 6px;
+  background: #edf3f9;
+  color: var(--navy);
+  padding: 4px 7px;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.alias-remove {
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  background: #dbe8f5;
+  color: var(--navy);
+  line-height: 1;
+}
+
+.alias-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .danger-text {
   color: var(--red);
 }
@@ -555,6 +611,7 @@ tr:last-child td {
 
   .topbar,
   .auth-grid,
+  .alias-entry-row,
   .grid.two,
   .grid.three,
   .grid.four,
