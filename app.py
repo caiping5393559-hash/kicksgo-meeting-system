@@ -37,6 +37,7 @@ AGENDA_REVIEW = "回顾上周会议纪要"
 AGENDA_AGENCY = "美国代运营内部评估"
 AGENDA_DOMESTIC = "国内货品与采购"
 AGENDA_US_WAREHOUSE = "美国仓库与履约"
+AGENDA_FINANCE = "财务与利润复盘"
 AGENDA_PARTNERS = "其他TikTok店铺与合作方"
 AGENDA_TECH = "技术与系统"
 AGENDA_DECISION = "本周决策与下周行动项"
@@ -47,9 +48,9 @@ ROLE_AGENDA_MAP = {
     "role_us_warehouse": AGENDA_US_WAREHOUSE,
     "role_sz_warehouse": AGENDA_DOMESTIC,
     "role_sz_product_ops": AGENDA_DOMESTIC,
-    "role_sz_finance": AGENDA_DOMESTIC,
+    "role_sz_finance": AGENDA_FINANCE,
     "role_cn_tech": AGENDA_TECH,
-    "role_cn_admin": AGENDA_REVIEW,
+    "role_cn_admin": AGENDA_DECISION,
     "role_meeting_host": AGENDA_DECISION,
     "role_partner_boss": AGENDA_DECISION,
 }
@@ -661,7 +662,9 @@ def agenda_module_for_role(role: dict[str, Any] | None) -> str:
     ).lower()
     if re.search(r"美国仓库|us warehouse|履约|物流", text):
         return AGENDA_US_WAREHOUSE
-    if re.search(r"深圳仓库|国内仓库|深圳货品|采购|货品|供应链|财务", text):
+    if re.search(r"财务|利润|成本|账务|应收|应付|回款", text):
+        return AGENDA_FINANCE
+    if re.search(r"深圳仓库|国内仓库|深圳货品|采购|货品|供应链", text):
         return AGENDA_DOMESTIC
     if re.search(r"技术|系统|数据|自动化", text):
         return AGENDA_TECH

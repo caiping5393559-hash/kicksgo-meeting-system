@@ -21,19 +21,20 @@ const pages = [
 ];
 
 const part2Agenda = [
-  ["5分钟", "回顾上周会议纪要", "主持人", "上周行动项、负责人、完成情况、未完成原因。"],
-  ["8分钟", "美国代运营内部评估", "你/老陈", "第一部分信息转成内部判断：人、货、流量、内容、价格、仓库。"],
-  ["8分钟", "国内货品与采购", "国内采购/运营", "爆款SKU、缺货SKU、补货进度、价格优势、下周直播支持。"],
-  ["8分钟", "美国仓库与履约", "美国仓库", "24h发货率、延迟、错发漏发、退件丢件、是否支持爆单。"],
-  ["5分钟", "其他TikTok店铺与合作方", "Ken/诺诺", "自营其他店、合作方店铺、继续供货或暂停建议。"],
-  ["3分钟", "技术与系统", "国际技术", "系统、数据上传、腾讯会议名称匹配、权限问题。"],
-  ["3分钟", "本周决策与下周行动项", "你/老陈", "必须执行、待观察、暂停调整，每项明确负责人和截止日期。"],
+  ["8分钟", "美国代运营内部评估", "美国代运营 / 合伙人", "完成代运营第一部分后，本板块先讲行动项状态，再讲会前备注，再把周报和会议信息转成内部判断：人、货、流量、内容、价格、仓库。"],
+  ["8分钟", "国内货品与采购", "深圳货品运营 / 深圳仓库", "先讲自己名下行动项状态，再讲会前备注，再讲爆款SKU、缺货SKU、补货进度、价格优势、下周直播支持。"],
+  ["8分钟", "美国仓库与履约", "美国仓库", "先讲自己名下行动项状态，再讲会前备注，再讲24h发货率、延迟、错发漏发、退件丢件、是否支持爆单。"],
+  ["6分钟", "财务与利润复盘", "深圳财务", "先讲自己名下行动项状态，再讲会前备注，再讲成本、利润、应收应付、回款、账务异常和需要决策事项。"],
+  ["5分钟", "其他TikTok店铺与合作方", "Ken/诺诺/合作方负责人", "先讲自己名下行动项状态，再讲会前备注，再讲其他店铺、合作方店铺、继续供货或暂停建议。"],
+  ["3分钟", "技术与系统", "国内技术", "先讲自己名下行动项状态，再讲会前备注，再讲系统、数据上传、腾讯会议名称匹配、权限问题。"],
+  ["5分钟", "本周决策与下周行动项", "主持人 / 合伙人", "所有人讲完后，主持人总结上周行动项完成情况，再讨论当前决策与下周行动项；每项必须明确负责人、截止日期、需要配合人。"],
 ];
 
 const AGENDA_REVIEW = "回顾上周会议纪要";
 const AGENDA_AGENCY = "美国代运营内部评估";
 const AGENDA_DOMESTIC = "国内货品与采购";
 const AGENDA_US_WAREHOUSE = "美国仓库与履约";
+const AGENDA_FINANCE = "财务与利润复盘";
 const AGENDA_PARTNERS = "其他TikTok店铺与合作方";
 const AGENDA_TECH = "技术与系统";
 const AGENDA_DECISION = "本周决策与下周行动项";
@@ -44,9 +45,9 @@ const roleAgendaMap = {
   role_us_warehouse: AGENDA_US_WAREHOUSE,
   role_sz_warehouse: AGENDA_DOMESTIC,
   role_sz_product_ops: AGENDA_DOMESTIC,
-  role_sz_finance: AGENDA_DOMESTIC,
+  role_sz_finance: AGENDA_FINANCE,
   role_cn_tech: AGENDA_TECH,
-  role_cn_admin: AGENDA_REVIEW,
+  role_cn_admin: AGENDA_DECISION,
   role_meeting_host: AGENDA_DECISION,
   role_partner_boss: AGENDA_DECISION,
 };
@@ -170,7 +171,8 @@ function roleAgendaTitle(role) {
   if (roleAgendaMap[role.id]) return roleAgendaMap[role.id];
   const text = `${role.name || ""} ${role.category || ""} ${role.description || ""} ${(role.aliases || []).join(" ")}`.toLowerCase();
   if (/美国仓库|us warehouse|履约|物流/.test(text)) return AGENDA_US_WAREHOUSE;
-  if (/深圳仓库|国内仓库|深圳货品|采购|货品|供应链|财务/.test(text)) return AGENDA_DOMESTIC;
+  if (/财务|利润|成本|账务|应收|应付|回款/.test(text)) return AGENDA_FINANCE;
+  if (/深圳仓库|国内仓库|深圳货品|采购|货品|供应链/.test(text)) return AGENDA_DOMESTIC;
   if (/技术|系统|数据|自动化/.test(text)) return AGENDA_TECH;
   if (/代运营|自雇运营|直播|主播|达人/.test(text)) return AGENDA_AGENCY;
   if (/合作|店铺|tiktok|ken|诺诺|渠道/.test(text)) return AGENDA_PARTNERS;
@@ -198,7 +200,8 @@ function noteAgendaTitle(note) {
   if (byRole) return byRole;
   const text = String(note?.module || "");
   if (/仓库|物流|履约/.test(text)) return AGENDA_US_WAREHOUSE;
-  if (/货品|采购|财务/.test(text)) return AGENDA_DOMESTIC;
+  if (/财务|利润|成本|账务|应收|应付|回款/.test(text)) return AGENDA_FINANCE;
+  if (/货品|采购/.test(text)) return AGENDA_DOMESTIC;
   if (/技术|系统/.test(text)) return AGENDA_TECH;
   if (/合作|店铺|达人/.test(text)) return AGENDA_PARTNERS;
   return AGENDA_DECISION;
@@ -579,7 +582,8 @@ function renderDashboard() {
           </div>
         </div>
         <div class="panel">
-          <h2>上周行动项回顾</h2>
+          <h2>上周行动项状态参考</h2>
+          <p class="hint">各业务板块发言时先讲自己名下行动项状态：是否完成；未完成什么时候完成、需要谁配合。主持人最后统一总结。</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>事项</th><th>负责人</th><th>状态</th><th>截止</th></tr></thead>
