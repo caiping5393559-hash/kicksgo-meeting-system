@@ -32,21 +32,7 @@ data/transcripts/*.txt
 
 ## 初始账号
 
-管理员账号：
-
-```text
-用户名：admin
-密码：Kicksgo-Admin-2026!
-```
-
-你的普通管理账号：
-
-```text
-用户名：蔡平
-密码：Kicksgo-Boss-2026!
-```
-
-生产环境请在 Render 环境变量里改：
+系统会创建管理员账号和蔡平账号。生产环境密码请在 Render 环境变量里设置，不要写在页面或文档里：
 
 ```text
 DEFAULT_ADMIN_PASSWORD

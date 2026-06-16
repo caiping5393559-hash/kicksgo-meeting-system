@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kicksgo 周会管理系统</title>
-    <link rel="stylesheet" href="/styles.css?v=20260616-logout-fix" />
+    <link rel="stylesheet" href="/styles.css?v=20260616-register-gate" />
   </head>
   <body>
     <div id="authView" class="auth-shell">
@@ -22,10 +22,13 @@
             <label>用户名<input name="username" autocomplete="username" required placeholder="可以用中文名，例如：凯尔、老陈、诺诺" /></label>
             <label>密码<input name="password" type="password" autocomplete="current-password" required /></label>
             <button type="submit">登录</button>
-            <div class="hint">初始管理员：admin / Kicksgo-Admin-2026!</div>
-            <div class="hint">你的普通账号：蔡平 / Kicksgo-Boss-2026!</div>
           </form>
-          <form id="registerForm" class="form-block secondary">
+          <div id="registerGate" class="form-block secondary">
+            <h2>注册账号</h2>
+            <p class="hint">没有账号时，先点击注册，再填写用户名、腾讯会议名和业务角色。提交后等待管理员审核。</p>
+            <button type="button" id="showRegisterBtn" class="plain-btn">注册账号</button>
+          </div>
+          <form id="registerForm" class="form-block secondary hidden">
             <h2>注册账号</h2>
             <label>用户名<input name="username" autocomplete="username" required placeholder="可以用中文名，例如：凯尔、老陈、诺诺" /></label>
             <label>系统显示名<input name="display_name" required placeholder="例如：凯尔 / Ken / 深圳财务-小王" /></label>
@@ -47,6 +50,7 @@
             </div>
             <label>密码<input name="password" type="password" autocomplete="new-password" required /></label>
             <button type="submit">提交注册</button>
+            <button type="button" id="hideRegisterBtn" class="plain-btn">取消注册</button>
             <div class="hint">用户名建议直接用自己的中文名或平时称呼；业务角色按实际负责内容选择，可以多选。不确定就选最接近的，提交后本人不能更改，只能由管理员后台调整。</div>
           </form>
         </div>
@@ -86,6 +90,6 @@
       </main>
     </div>
 
-    <script src="/app.js?v=20260616-logout-fix"></script>
+    <script src="/app.js?v=20260616-register-gate"></script>
   </body>
 </html>

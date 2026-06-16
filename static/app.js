@@ -257,8 +257,19 @@ function showMessage(target, text, ok = false) {
 function renderAuth() {
   qs("#authView").classList.remove("hidden");
   qs("#appView").classList.add("hidden");
+  setRegisterVisible(false);
   initAliasEditors(qs("#authView"));
   renderRegisterBusinessRoles();
+}
+
+function setRegisterVisible(visible) {
+  qs("#registerGate")?.classList.toggle("hidden", visible);
+  qs("#registerForm")?.classList.toggle("hidden", !visible);
+  if (visible) {
+    initAliasEditors(qs("#registerForm"));
+    renderRegisterBusinessRoles();
+    qs('#registerForm input[name="username"]')?.focus();
+  }
 }
 
 function renderRegisterBusinessRoles() {
@@ -1269,6 +1280,18 @@ qs("#loginForm").addEventListener("submit", async (event) => {
   }
 });
 
+qs("#showRegisterBtn")?.addEventListener("click", () => {
+  showMessage("#authMessage", "");
+  setRegisterVisible(true);
+});
+
+qs("#hideRegisterBtn")?.addEventListener("click", () => {
+  showMessage("#authMessage", "");
+  qs("#registerForm")?.reset();
+  setAliasEditorValues(qs("#registerForm"), "mention_aliases", []);
+  setRegisterVisible(false);
+});
+
 qs("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -1284,6 +1307,7 @@ qs("#registerForm").addEventListener("submit", async (event) => {
     event.currentTarget.reset();
     setAliasEditorValues(event.currentTarget, "mention_aliases", []);
     renderRegisterBusinessRoles();
+    setRegisterVisible(false);
   } catch (err) {
     showMessage("#authMessage", err.message);
   }
