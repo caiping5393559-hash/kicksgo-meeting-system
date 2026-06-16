@@ -555,6 +555,12 @@ tr:last-child td {
   min-width: 120px;
 }
 
+.compact-textarea {
+  min-width: 240px;
+  min-height: 74px;
+  line-height: 1.5;
+}
+
 .multi-select {
   min-width: 180px;
   min-height: 106px;

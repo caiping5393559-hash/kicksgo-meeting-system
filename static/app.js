@@ -266,7 +266,7 @@ function renderRegisterBusinessRoles() {
   box.innerHTML = checkboxOptions(
     app.publicRoles.map((role) => ({
       id: role.id,
-      name: `${role.name}${role.category ? ` / ${role.category}` : ""}`,
+      name: role.name,
     })),
     [],
     "business_role_ids",
@@ -772,7 +772,7 @@ function renderAdmin() {
     qs("#content").innerHTML = `<div class="panel">没有管理员权限。</div>`;
     return;
   }
-  setTitle("管理员", "系统权限、业务角色分类、账号绑定、人员称呼和腾讯会议名称匹配。");
+  setTitle("管理员", "系统权限、业务角色职责、账号绑定、人员称呼和腾讯会议名称匹配。");
   const users = app.data.users || [];
   const people = app.data.people || [];
   const businessRoles = app.data.business_roles || [];
@@ -831,42 +831,26 @@ function renderAdmin() {
         <div class="split-actions" style="margin-top:12px"><button type="submit">创建账号</button><span id="createUserMessage" class="message"></span></div>
       </form>
 
-      <form id="roleForm" class="panel">
-        <h2>业务角色分类</h2>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>角色名称<input name="name" placeholder="例如：深圳财务" required /></label>
-          <label>分类<input name="category" placeholder="例如：财务 / 美国运营" /></label>
-          <label class="field-wide">职责说明<textarea name="description"></textarea></label>
-          <label class="field-wide">角色别名 / 会议里常见说法<textarea name="aliases" placeholder="例如：主持人, 周会主持人"></textarea></label>
-        </div>
-        <div class="split-actions" style="margin-top:12px">
-          <button type="submit">保存角色</button>
-          <button type="button" class="plain-btn" id="clearRoleBtn">清空</button>
-          <span id="roleMessage" class="message"></span>
-        </div>
-      </form>
-
       <div class="panel">
-        <h2>角色绑定账号</h2>
-        <p class="hint">一个业务角色可以绑定多个注册账号；同一个账号也可以出现在多个业务角色里。</p>
+        <h2>业务角色职责 / 账号绑定</h2>
+        <p class="hint">系统已有默认业务角色和默认职责；可以直接修改职责、会议说法，并勾选绑定账号。</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>业务角色</th><th>分类</th><th>职责</th><th>会议说法</th><th>绑定账号</th><th>操作</th></tr></thead>
+            <thead><tr><th>业务角色</th><th>职责（可修改）</th><th>会议说法（可修改）</th><th>绑定账号</th><th>操作</th></tr></thead>
             <tbody>
               ${businessRoles.map((role) => `
                 <tr data-role-id="${role.id}">
                   <td><strong>${escapeHtml(role.name)}</strong></td>
-                  <td>${escapeHtml(role.category || "")}</td>
-                  <td>${escapeHtml(role.description || "")}</td>
-                  <td>${escapeHtml((role.aliases || []).join(", "))}</td>
+                  <td><textarea class="role-description compact-textarea">${escapeHtml(role.description || "")}</textarea></td>
+                  <td><textarea class="role-aliases compact-textarea" placeholder="例如：主持人, 周会主持人">${escapeHtml((role.aliases || []).join(", "))}</textarea></td>
                   <td><div class="checkbox-grid user-checkboxes">${userCheckboxes(role.id)}</div></td>
-                  <td class="split-actions"><button class="plain-btn save-role-users">保存绑定</button><button class="plain-btn edit-role" data-id="${role.id}">编辑角色</button>${role.id.startsWith("bizrole_") ? `<button class="plain-btn danger-text delete-role" data-id="${role.id}">删除角色</button>` : ""}</td>
+                  <td><button class="plain-btn save-role-users">保存职责和绑定</button></td>
                 </tr>
-              `).join("") || '<tr><td colspan="6" class="muted">暂无业务角色</td></tr>'}
+              `).join("") || '<tr><td colspan="5" class="muted">暂无业务角色</td></tr>'}
             </tbody>
           </table>
         </div>
+        <div id="roleMessage" class="message"></div>
       </div>
 
       <form id="personForm" class="panel">
@@ -1043,11 +1027,7 @@ function wireAdmin() {
       showMessage("#createUserMessage", err.message);
     }
   });
-  qs("#roleForm").addEventListener("submit", saveBusinessRole);
-  qs("#clearRoleBtn").addEventListener("click", () => qs("#roleForm").reset());
   document.querySelectorAll(".save-role-users").forEach((btn) => btn.addEventListener("click", saveRoleUsers));
-  document.querySelectorAll(".edit-role").forEach((btn) => btn.addEventListener("click", () => fillBusinessRole(btn.dataset.id)));
-  document.querySelectorAll(".delete-role").forEach((btn) => btn.addEventListener("click", () => deleteBusinessRole(btn.dataset.id)));
   qs("#personForm").addEventListener("submit", savePerson);
   qs("#clearPersonBtn").addEventListener("click", () => {
     qs("#personForm").reset();
@@ -1060,43 +1040,24 @@ function wireAdmin() {
   document.querySelectorAll(".edit-meeting").forEach((btn) => btn.addEventListener("click", () => fillMeeting(btn.dataset.id)));
 }
 
-async function saveBusinessRole(event) {
-  event.preventDefault();
-  const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-  body.aliases = String(body.aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
-  try {
-    await api("/api/admin/save-business-role", { method: "POST", body });
-    await refresh();
-    renderAdmin();
-  } catch (err) {
-    showMessage("#roleMessage", err.message);
-  }
-}
-
-function fillBusinessRole(id) {
-  const role = (app.data.business_roles || []).find((item) => item.id === id);
-  if (!role) return;
-  const form = qs("#roleForm");
-  for (const [key, value] of Object.entries(role)) {
-    if (form.elements[key]) form.elements[key].value = Array.isArray(value) ? value.join(", ") : value || "";
-  }
-  window.scrollTo({ top: form.offsetTop - 20, behavior: "smooth" });
-}
-
-async function deleteBusinessRole(id) {
-  if (!confirm("确定删除这个业务角色？账号不会删除，只会解除这个角色绑定。")) return;
-  try {
-    await api("/api/admin/delete-business-role", { method: "POST", body: { id } });
-    await refresh();
-    renderAdmin();
-  } catch (err) {
-    showMessage("#roleMessage", err.message);
-  }
-}
-
 async function saveRoleUsers(event) {
   const row = event.currentTarget.closest("tr");
+  const role = (app.data.business_roles || []).find((item) => item.id === row.dataset.roleId);
+  if (!role) return;
+  const aliases = String(row.querySelector(".role-aliases")?.value || "")
+    .split(/[,，\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
   try {
+    await api("/api/admin/save-business-role", {
+      method: "POST",
+      body: {
+        id: role.id,
+        name: role.name,
+        description: row.querySelector(".role-description")?.value || "",
+        aliases,
+      },
+    });
     await api("/api/admin/save-role-users", {
       method: "POST",
       body: {
@@ -1105,7 +1066,8 @@ async function saveRoleUsers(event) {
       },
     });
     await refresh();
-    showMessage("#roleMessage", "角色绑定已保存", true);
+    renderAdmin();
+    setTimeout(() => showMessage("#roleMessage", "业务角色职责和账号绑定已保存", true), 0);
   } catch (err) {
     showMessage("#roleMessage", err.message);
   }
