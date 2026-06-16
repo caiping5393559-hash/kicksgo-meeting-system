@@ -330,10 +330,8 @@ async function loadPublicConfig() {
 function renderAppShell() {
   qs("#authView").classList.add("hidden");
   qs("#appView").classList.remove("hidden");
-  if (app.page === "report" && !canViewAgencyReport()) app.page = "dashboard";
   const visiblePages = pages.filter(([key]) => {
     if (key === "admin") return app.user?.role === "admin";
-    if (key === "report") return canViewAgencyReport();
     return true;
   });
   qs("#nav").innerHTML = visiblePages
@@ -348,7 +346,6 @@ function renderAppShell() {
 function renderPage() {
   const title = pages.find(([key]) => key === app.page)?.[1] || "周会首页";
   setTitle(title, "");
-  if (app.page === "report" && !canViewAgencyReport()) app.page = "dashboard";
   if (app.page === "dashboard") renderDashboard();
   if (app.page === "meetings") renderMeetings();
   if (app.page === "report") renderReport();
@@ -534,27 +531,29 @@ function renderReport() {
     .map((u) => u.person_id)
     .filter(Boolean);
   const fallbackKyle = people.find((p) => p.id === "person_kyle") || people[0] || {};
+  const canEditReport = canViewAgencyReport();
   const canChoose = ["admin", "manager"].includes(app.user.role);
-  const defaultPersonId = app.user.person_id || agencyPersonIds[0] || fallbackKyle.id;
-  const selectedPerson = canChoose ? (sessionStorage.getItem("reportPersonId") || defaultPersonId) : app.user.person_id;
+  const defaultPersonId = agencyPersonIds[0] || fallbackKyle.id || app.user.person_id;
+  const selectedPerson = canChoose ? (sessionStorage.getItem("reportPersonId") || defaultPersonId) : (canEditReport ? app.user.person_id : defaultPersonId);
   const report = (app.data.weekly_reports || []).find((r) => r.meeting_id === meeting?.id && r.person_id === selectedPerson) || { fields: {} };
   const fields = report.fields || {};
-  setTitle("美国代运营周报", "从2026-06-22中国时间这次周会开始，美国代运营会前填写直营店周报。");
+  setTitle("美国代运营周报", canEditReport ? "美国代运营角色会前填写直营店周报；其他人可查看完成后的内容。" : "查看美国代运营完成后的第一部分周报内容。");
   qs("#content").innerHTML = `
     <form id="reportForm" class="grid">
       <div class="panel">
         <div class="toolbar">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
           ${canChoose ? `<label>填写对象<select name="person_id">${people.map((p) => `<option value="${p.id}" ${p.id === selectedPerson ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>` : ""}
-          <button type="submit">保存周报</button>
+          ${canEditReport ? '<button type="submit">保存周报</button>' : '<span class="tag">只读查看</span>'}
           <span id="reportMessage" class="message"></span>
         </div>
+        ${!canEditReport ? '<p class="hint">只有业务角色为“美国代运营”的账号可以填写或修改；其他账号只能查看已保存内容。</p>' : ""}
       </div>
       ${reportSections.map(([title, items]) => `
         <div class="panel">
           <h2>${escapeHtml(title)}</h2>
           <div class="form-grid">
-            ${items.map((item) => fieldHtml(item, fields[item[0]])).join("")}
+            ${items.map((item) => fieldHtml(item, fields[item[0]], !canEditReport)).join("")}
           </div>
         </div>
       `).join("")}
@@ -564,19 +563,20 @@ function renderReport() {
     sessionStorage.setItem("reportPersonId", event.target.value);
     renderReport();
   });
-  qs("#reportForm").addEventListener("submit", saveReport);
+  if (canEditReport) qs("#reportForm").addEventListener("submit", saveReport);
 }
 
-function fieldHtml(item, value) {
+function fieldHtml(item, value, readonly = false) {
   const [key, label, type, choices] = item;
   const wide = type === "textarea" ? "field-wide" : "";
+  const disabled = readonly ? "disabled" : "";
   if (type === "select") {
-    return `<label class="${wide}">${escapeHtml(label)}<select class="input-zone" name="${key}"><option value=""></option>${choices.map((c) => `<option value="${escapeHtml(c)}" ${value === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}</select></label>`;
+    return `<label class="${wide}">${escapeHtml(label)}<select class="input-zone" name="${key}" ${disabled}><option value=""></option>${choices.map((c) => `<option value="${escapeHtml(c)}" ${value === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}</select></label>`;
   }
   if (type === "textarea") {
-    return `<label class="${wide}">${escapeHtml(label)}<textarea class="input-zone" name="${key}">${escapeHtml(value || "")}</textarea></label>`;
+    return `<label class="${wide}">${escapeHtml(label)}<textarea class="input-zone" name="${key}" ${disabled}>${escapeHtml(value || "")}</textarea></label>`;
   }
-  return `<label>${escapeHtml(label)}<input class="input-zone" name="${key}" value="${escapeHtml(value || "")}" /></label>`;
+  return `<label>${escapeHtml(label)}<input class="input-zone" name="${key}" value="${escapeHtml(value || "")}" ${disabled} /></label>`;
 }
 
 function meetingOptions(selectedId) {
@@ -585,6 +585,10 @@ function meetingOptions(selectedId) {
 
 async function saveReport(event) {
   event.preventDefault();
+  if (!canViewAgencyReport()) {
+    showMessage("#reportMessage", "只有美国代运营角色可以填写或修改周报");
+    return;
+  }
   const form = new FormData(event.currentTarget);
   const fields = {};
   for (const section of reportSections) {
@@ -908,6 +912,12 @@ function renderAdmin() {
   );
   qs("#content").innerHTML = `
     <div class="grid">
+      <div class="panel">
+        <h2>第一部分任务</h2>
+        <p class="hint">美国代运营角色负责填写；管理员和其他成员可进入查看已完成周报。</p>
+        <button type="button" class="plain-btn go-report-page">查看美国代运营周报</button>
+      </div>
+
       <form id="createUserForm" class="panel">
         <h2>管理员创建账号</h2>
         <p class="hint">这里给管理员提前建账号使用；成员自己注册时，用户名建议直接用中文名或平时称呼，业务角色按实际负责内容多选，不确定就选最接近的，管理员后续可以统一调整。</p>
@@ -1100,6 +1110,10 @@ function wireAdmin() {
     if (event.target.id === "personModal") closePersonModal();
   });
   document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => openPersonModal(btn.dataset.id)));
+  document.querySelectorAll(".go-report-page").forEach((btn) => btn.addEventListener("click", () => {
+    app.page = "report";
+    renderPage();
+  }));
 }
 
 async function saveRoleUsers(event) {

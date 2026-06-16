@@ -1074,17 +1074,30 @@ class AppHandler(BaseHTTPRequestHandler):
                 "audit_logs": state.get("audit_logs", [])[-80:] if is_admin(user) else [],
             }
         person_id = user.get("person_id")
+        agency_person_ids = {
+            account.get("person_id")
+            for account in state.get("users", [])
+            if AGENCY_OPS_ROLE_ID in (account.get("business_role_ids") or []) and account.get("person_id")
+        }
+        visible_person_ids = {person_id, *agency_person_ids}
         visible_transcripts = [
             record for record in state.get("transcript_uploads", [])
             if can_read_transcript_record(user, record)
         ]
         return {
-            "users": [sanitize_user(user)],
-            "people": [p for p in state.get("people", []) if p.get("id") == person_id],
+            "users": [
+                sanitize_user(account)
+                for account in state.get("users", [])
+                if account.get("id") == user.get("id") or account.get("person_id") in agency_person_ids
+            ],
+            "people": [p for p in state.get("people", []) if p.get("id") in visible_person_ids],
             "business_roles": state.get("business_roles", []),
             "settings": state.get("settings", {}),
             "meetings": state.get("meetings", []),
-            "weekly_reports": [r for r in state.get("weekly_reports", []) if r.get("person_id") == person_id],
+            "weekly_reports": [
+                r for r in state.get("weekly_reports", [])
+                if r.get("person_id") == person_id or r.get("person_id") in agency_person_ids
+            ],
             "pre_meeting_notes": [n for n in state.get("pre_meeting_notes", []) if n.get("person_id") == person_id],
             "transcript_uploads": visible_transcripts,
             "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") in {"", person_id}],
@@ -1211,6 +1224,9 @@ class AppHandler(BaseHTTPRequestHandler):
     def handle_save_report(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         meeting_id = str(payload.get("meeting_id") or "")
         person_id = str(payload.get("person_id") or user.get("person_id") or "")
+        if not user_has_business_role(user, AGENCY_OPS_ROLE_ID):
+            self.send_json({"ok": False, "error": "只有美国代运营角色可以填写或修改周报"}, 403)
+            return
         if not is_manager(user) and person_id != user.get("person_id"):
             self.send_json({"ok": False, "error": "No permission"}, 403)
             return
