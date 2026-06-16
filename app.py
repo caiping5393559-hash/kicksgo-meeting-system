@@ -210,7 +210,7 @@ def default_state() -> dict[str, Any]:
             "attends_weekly": True,
             "needs_weekly_report": False,
             "has_login": True,
-            "meeting_aliases": ["蔡平", "我", "老板", "Aaron", "iPhone"],
+            "meeting_aliases": ["蔡平", "我", "老板", "Aaron", "iPhone", "蔡平 诺诺"],
             "mention_aliases": ["蔡平", "我", "老板", "合伙人", "Boss", "Aaron"],
         },
         {
@@ -224,8 +224,8 @@ def default_state() -> dict[str, Any]:
             "attends_weekly": True,
             "needs_weekly_report": False,
             "has_login": False,
-            "meeting_aliases": ["老陈", "Chen"],
-            "mention_aliases": ["老陈", "陈总", "Chen"],
+            "meeting_aliases": ["老陈", "Chen", "人生如戏"],
+            "mention_aliases": ["老陈", "陈总", "Chen", "人生如戏"],
         },
         {
             "id": "person_kyle",
@@ -294,8 +294,8 @@ def default_state() -> dict[str, Any]:
             "attends_weekly": True,
             "needs_weekly_report": False,
             "has_login": False,
-            "meeting_aliases": ["Ken"],
-            "mention_aliases": ["Ken"],
+            "meeting_aliases": ["Ken", "njj"],
+            "mention_aliases": ["Ken", "njj"],
         },
         {
             "id": "person_nono",
@@ -597,6 +597,11 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(user.get("business_role_ids"), list):
             user["business_role_ids"] = []
         user.setdefault("must_change_password", False)
+    forced_person_aliases = {
+        "person_boss": {"meeting_aliases": ["蔡平 诺诺"], "mention_aliases": []},
+        "person_chen": {"meeting_aliases": ["人生如戏"], "mention_aliases": ["人生如戏"]},
+        "person_ken": {"meeting_aliases": ["njj"], "mention_aliases": ["njj"]},
+    }
     for person in state.get("people", []):
         if person.get("id") == "person_boss":
             if str(person.get("real_name") or "") in {"", "老板"}:
@@ -611,6 +616,10 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         mention_aliases = person.setdefault("mention_aliases", [])
         if not isinstance(mention_aliases, list):
             person["mention_aliases"] = []
+        for field, values in forced_person_aliases.get(str(person.get("id") or ""), {}).items():
+            for value in values:
+                if value and value not in person[field]:
+                    person[field].append(value)
         if not person.get("manual_aliases"):
             default_person = next((p for p in defaults.get("people", []) if p.get("id") == person.get("id")), None)
             if default_person:
