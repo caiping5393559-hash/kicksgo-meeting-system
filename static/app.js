@@ -242,6 +242,20 @@ function previousMeeting() {
   return meetings[index - 1] || meetings.find((m) => m.status === "已开会") || null;
 }
 
+function meetingStarted(meeting) {
+  if (!meeting) return false;
+  if (meeting.status === "待开会") return false;
+  if (meeting.status === "进行中" || meeting.status === "已开会") return true;
+  if (!meeting.us_date) return false;
+  const start = new Date(`${meeting.us_date}T${meeting.us_time || "00:00"}:00`);
+  return !Number.isNaN(start.getTime()) && Date.now() >= start.getTime();
+}
+
+function transcriptMetricText(uploaded, meeting) {
+  if (uploaded) return "已上传";
+  return meetingStarted(meeting) ? "待上传" : "会后上传";
+}
+
 function setTitle(title, subtitle) {
   qs("#pageTitle").textContent = title;
   qs("#pageSubtitle").textContent = subtitle || "";
@@ -387,8 +401,8 @@ function renderDashboard() {
         </div>
         <div class="metric-row">
           <div class="metric"><span>美国代运营周报</span><strong>${report ? "已保存" : meeting?.kyle_report_required ? "待填写" : "不强制"}</strong></div>
-          <div class="metric"><span>第1段文字记录</span><strong>${part1Uploaded ? "已上传" : "待上传"}</strong></div>
-          <div class="metric"><span>第2段文字记录</span><strong>${part2Uploaded ? "已上传" : "待上传"}</strong></div>
+          <div class="metric"><span>第1段文字记录</span><strong>${transcriptMetricText(part1Uploaded, meeting)}</strong></div>
+          <div class="metric"><span>第2段文字记录</span><strong>${transcriptMetricText(part2Uploaded, meeting)}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
         </div>
         <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
