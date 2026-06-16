@@ -86,6 +86,10 @@ def split_aliases(value: Any) -> list[str]:
     return aliases
 
 
+def is_valid_username(username: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.@\-\u4e00-\u9fff]{2,40}", str(username or "")))
+
+
 def default_business_roles() -> list[dict[str, Any]]:
     return [
         {
@@ -1091,8 +1095,8 @@ class AppHandler(BaseHTTPRequestHandler):
         meeting_aliases = split_aliases(payload.get("meeting_aliases"))
         mention_aliases = split_aliases(payload.get("mention_aliases"))
         business_role_ids = clean_business_role_ids(state, payload.get("business_role_ids"))
-        if not re.match(r"^[A-Za-z0-9_.@-]{3,40}$", username):
-            self.send_json({"ok": False, "error": "用户名至少3位，只能包含字母、数字、点、下划线、横线或@"}, 400)
+        if not is_valid_username(username):
+            self.send_json({"ok": False, "error": "用户名至少2位，只能包含中文、字母、数字、点、下划线、横线或@"}, 400)
             return
         if len(password) < 6:
             self.send_json({"ok": False, "error": "密码至少6位"}, 400)
@@ -1327,8 +1331,11 @@ class AppHandler(BaseHTTPRequestHandler):
         if path == "/api/admin/create-user":
             username = str(payload.get("username") or "").strip()
             password = str(payload.get("password") or secrets.token_urlsafe(8))
-            if not username or any(u.get("username", "").lower() == username.lower() for u in state["users"]):
-                self.send_json({"ok": False, "error": "用户名为空或已存在"}, 400)
+            if not is_valid_username(username):
+                self.send_json({"ok": False, "error": "用户名至少2位，只能包含中文、字母、数字、点、下划线、横线或@"}, 400)
+                return
+            if any(u.get("username", "").lower() == username.lower() for u in state["users"]):
+                self.send_json({"ok": False, "error": "用户名已存在"}, 400)
                 return
             user_id = new_id("user")
             person_id = str(payload.get("person_id") or "")
