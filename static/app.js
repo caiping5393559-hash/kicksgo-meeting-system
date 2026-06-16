@@ -8,6 +8,7 @@ const app = {
 };
 
 const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
+const MEETING_HOST_ROLE_ID = "role_meeting_host";
 
 const pages = [
   ["dashboard", "周会首页"],
@@ -154,6 +155,10 @@ function hasBusinessRole(roleId, user = app.user) {
 
 function canViewAgencyReport() {
   return hasBusinessRole(AGENCY_OPS_ROLE_ID);
+}
+
+function canManageActions() {
+  return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID);
 }
 
 function userDisplayName(user) {
@@ -919,8 +924,10 @@ async function saveTranscript(event) {
   try {
     const res = await api("/api/transcripts/upload", { method: "POST", body });
     (res.records || []).forEach((record) => upsertById("transcript_uploads", record));
+    (res.action_drafts || []).forEach((draft) => upsertById("action_drafts", draft));
+    const draftItemCount = (res.action_drafts || []).reduce((sum, draft) => sum + (draft.items || []).length, 0);
     renderTranscripts();
-    setTimeout(() => showMessage("#transcriptMessage", "已上传保存", true), 0);
+    setTimeout(() => showMessage("#transcriptMessage", `已上传保存，并生成 ${draftItemCount} 条行动项初稿`, true), 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
   } finally {
@@ -954,16 +961,97 @@ async function viewTranscript(id) {
   }
 }
 
+function actionPriorityOptions(selected = "P1-本周必须") {
+  return ["P0-今天处理", "P1-本周必须", "P2-观察", "P3-低优先"]
+    .map((value) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`)
+    .join("");
+}
+
+function actionStatusOptions(selected = "未开始") {
+  return ["未开始", "进行中", "已完成", "暂停/调整"]
+    .map((value) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`)
+    .join("");
+}
+
+function draftItemRowHtml(item = {}, index = 0) {
+  return `
+    <tr data-item-id="${escapeHtml(item.id || "")}">
+      <td class="row-index">${index + 1}</td>
+      <td><textarea class="draft-title compact-textarea">${escapeHtml(item.title || "")}</textarea></td>
+      <td><select class="draft-owner">${registeredPersonOptions(item.owner_person_id || "", "待定")}</select></td>
+      <td><select class="draft-priority compact-input">${actionPriorityOptions(item.priority || "P1-本周必须")}</select></td>
+      <td><input class="draft-due" type="date" value="${escapeHtml(item.due_date || "")}" /></td>
+      <td><select class="draft-status compact-input">${actionStatusOptions(item.status || "未开始")}</select></td>
+      <td><textarea class="draft-notes compact-textarea">${escapeHtml(item.notes || "")}</textarea></td>
+      <td><button type="button" class="plain-btn danger-text remove-draft-row">删除</button></td>
+    </tr>
+  `;
+}
+
+function draftChatHtml(chat = []) {
+  if (!chat.length) return '<div class="muted">暂无对话</div>';
+  return chat.slice(-8).map((item) => `
+    <div class="draft-chat-message ${escapeHtml(item.role || "system")}">
+      <strong>${item.role === "user" ? "管理员/主持人" : item.role === "assistant" ? "系统" : "系统记录"}</strong>
+      <p>${escapeHtml(item.message || "")}</p>
+    </div>
+  `).join("");
+}
+
+function renderActionDrafts(drafts) {
+  if (!drafts.length) {
+    return `
+      <div class="panel">
+        <h2>会议行动项初稿</h2>
+        <p class="muted">上传会议文字记录后，系统会在这里生成待确认初稿。</p>
+      </div>
+    `;
+  }
+  return drafts.map((draft) => `
+    <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}">
+      <div class="section-title">
+        <div>
+          <h2>${escapeHtml(draft.title || "会议行动项初稿")}</h2>
+          <p class="muted">${escapeHtml(meetingName(draft.meeting_id))} · ${draft.part === "part1" ? "第一部分" : "第二部分"} · ${escapeHtml(draft.source_filename || "")}</p>
+        </div>
+        <span class="tag ${draft.status === "已确认生成行动项" ? "green" : "amber"}">${escapeHtml(draft.status || "待管理员确认")}</span>
+      </div>
+      <div class="table-wrap draft-table">
+        <table>
+          <thead><tr><th>#</th><th>事项</th><th>负责人</th><th>优先级</th><th>截止</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+          <tbody>${(draft.items || []).map((item, index) => draftItemRowHtml(item, index)).join("") || '<tr><td colspan="8" class="muted">系统未识别到明确行动项，可以手动新增一行。</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="draft-actions">
+        <button type="button" class="plain-btn add-draft-row">新增一行</button>
+        <button type="button" class="plain-btn save-draft">保存草稿</button>
+        <button type="button" class="approve-draft" ${draft.status === "已确认生成行动项" ? "disabled" : ""}>生成正式行动项</button>
+        <span class="message draft-message"></span>
+      </div>
+      <div class="draft-chat">
+        <div class="draft-chat-log">${draftChatHtml(draft.chat || [])}</div>
+        <div class="draft-chat-input">
+          <input class="draft-chat-text" placeholder="例如：第1条负责人改成蔡平；第2条删除；新增一条检查库存，负责人美国仓库" />
+          <button type="button" class="send-draft-chat">发送修改要求</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
 function renderActions() {
   const meeting = currentMeeting();
   const actions = app.data.action_items || [];
-  const canEdit = ["admin", "manager"].includes(app.user.role);
-  setTitle("行动项", "每次会议最后必须收口：事项、负责人、截止日期、状态。");
+  const drafts = (app.data.action_drafts || []).filter((draft) => draft.status !== "已确认生成行动项");
+  const canEdit = canManageActions();
+  const visibleActions = canEdit ? actions : actions.filter((a) => a.owner_person_id === app.user?.person_id);
+  setTitle(canEdit ? "会议行动项" : "我的本周落实行动项目", canEdit ? "上传会议文字后先生成初稿，管理员或主持人确认后再分发给负责人。" : "这里只显示已经落实到你名下的正式行动项。");
   qs("#content").innerHTML = `
     <div class="grid">
+      ${canEdit ? renderActionDrafts(drafts) : ""}
       ${canEdit ? `
       <form id="actionForm" class="panel">
-        <h2>新增 / 修改行动项</h2>
+        <h2>手动新增 / 修改正式行动项</h2>
         <input type="hidden" name="id" />
         <div class="form-grid">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
@@ -971,8 +1059,8 @@ function renderActions() {
           <label>负责人<select name="owner_person_id">${registeredPersonOptions("", "待定")}</select></label>
           <label class="field-wide">事项<input name="title" required /></label>
           <label>截止日期<input name="due_date" type="date" /></label>
-          <label>优先级<select name="priority"><option>P0-今天处理</option><option selected>P1-本周必须</option><option>P2-观察</option><option>P3-低优先</option></select></label>
-          <label>状态<select name="status"><option>未开始</option><option>进行中</option><option>已完成</option><option>暂停/调整</option></select></label>
+          <label>优先级<select name="priority">${actionPriorityOptions("P1-本周必须")}</select></label>
+          <label>状态<select name="status">${actionStatusOptions("未开始")}</select></label>
           <label>负责人补充<input name="owner_text" /></label>
           <label class="field-wide">备注<textarea name="notes"></textarea></label>
         </div>
@@ -983,12 +1071,12 @@ function renderActions() {
         </div>
       </form>` : ""}
       <div class="panel">
-        <h2>行动项列表</h2>
+        <h2>${canEdit ? "正式行动项列表" : "我的本周落实行动项目"}</h2>
         <div class="table-wrap">
           <table>
             <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
             <tbody>
-              ${actions.map((a) => `
+              ${visibleActions.map((a) => `
                 <tr>
                   <td>${escapeHtml(meetingName(a.meeting_id))}</td>
                   <td>${escapeHtml(a.title)}</td>
@@ -1008,6 +1096,127 @@ function renderActions() {
   qs("#actionForm")?.addEventListener("submit", saveAction);
   qs("#clearActionBtn")?.addEventListener("click", () => qs("#actionForm").reset());
   document.querySelectorAll(".edit-action").forEach((btn) => btn.addEventListener("click", () => fillAction(btn.dataset.id)));
+  document.querySelectorAll(".save-draft").forEach((btn) => btn.addEventListener("click", () => saveActionDraft(btn)));
+  document.querySelectorAll(".approve-draft").forEach((btn) => btn.addEventListener("click", () => approveActionDraft(btn)));
+  document.querySelectorAll(".send-draft-chat").forEach((btn) => btn.addEventListener("click", () => sendDraftChat(btn)));
+  document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
+  document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
+}
+
+function draftCardFromButton(button) {
+  return button.closest(".draft-card");
+}
+
+function draftPayloadFromCard(card) {
+  const items = Array.from(card?.querySelectorAll("tbody tr") || [])
+    .map((row) => {
+      const title = row.querySelector(".draft-title")?.value?.trim() || "";
+      if (!title) return null;
+      const ownerSelect = row.querySelector(".draft-owner");
+      return {
+        id: row.dataset.itemId || "",
+        title,
+        owner_person_id: ownerSelect?.value || "",
+        owner_text: ownerSelect?.selectedOptions?.[0]?.textContent || "",
+        priority: row.querySelector(".draft-priority")?.value || "P1-本周必须",
+        due_date: row.querySelector(".draft-due")?.value || "",
+        status: row.querySelector(".draft-status")?.value || "未开始",
+        notes: row.querySelector(".draft-notes")?.value || "",
+      };
+    })
+    .filter(Boolean);
+  return { id: card?.dataset.draftId || "", items };
+}
+
+function showDraftMessage(draftId, text, ok = false) {
+  const card = document.querySelector(`.draft-card[data-draft-id="${CSS.escape(draftId)}"]`);
+  const message = card?.querySelector(".draft-message");
+  showMessage(message, text, ok);
+}
+
+function renumberDraftRows(card) {
+  card?.querySelectorAll("tbody tr").forEach((row, index) => {
+    const cell = row.querySelector(".row-index");
+    if (cell) cell.textContent = String(index + 1);
+  });
+}
+
+function addDraftRow(button) {
+  const card = draftCardFromButton(button);
+  const tbody = card?.querySelector("tbody");
+  if (!tbody) return;
+  if (tbody.querySelector("td[colspan]")) tbody.innerHTML = "";
+  const index = tbody.querySelectorAll("tr").length;
+  tbody.insertAdjacentHTML("beforeend", draftItemRowHtml({}, index));
+  tbody.querySelector("tr:last-child .remove-draft-row")?.addEventListener("click", (event) => removeDraftRow(event.currentTarget));
+  tbody.querySelector("tr:last-child .draft-title")?.focus();
+}
+
+function removeDraftRow(button) {
+  const card = draftCardFromButton(button);
+  button.closest("tr")?.remove();
+  renumberDraftRows(card);
+}
+
+async function saveActionDraft(button) {
+  const card = draftCardFromButton(button);
+  const draftId = card?.dataset.draftId || "";
+  const done = setBusy(button, "保存中...");
+  showDraftMessage(draftId, "保存草稿中...", true);
+  try {
+    const res = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
+    upsertById("action_drafts", res.draft);
+    renderActions();
+    setTimeout(() => showDraftMessage(draftId, "草稿已保存", true), 0);
+  } catch (err) {
+    showDraftMessage(draftId, err.message);
+  } finally {
+    done();
+  }
+}
+
+async function approveActionDraft(button) {
+  const card = draftCardFromButton(button);
+  const draftId = card?.dataset.draftId || "";
+  if (!confirm("确认生成正式行动项？生成后会分发到负责人本周落实行动项目里。")) return;
+  const done = setBusy(button, "生成中...");
+  showDraftMessage(draftId, "正在生成正式行动项...", true);
+  try {
+    const saved = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
+    upsertById("action_drafts", saved.draft);
+    const res = await api("/api/action-drafts/approve", { method: "POST", body: { draft_id: draftId } });
+    upsertById("action_drafts", res.draft);
+    (res.actions || []).forEach((action) => upsertById("action_items", action));
+    renderActions();
+    setTimeout(() => showMessage("#actionMessage", `已生成 ${(res.actions || []).length} 条正式行动项`, true), 0);
+  } catch (err) {
+    showDraftMessage(draftId, err.message);
+  } finally {
+    done();
+  }
+}
+
+async function sendDraftChat(button) {
+  const card = draftCardFromButton(button);
+  const draftId = card?.dataset.draftId || "";
+  const input = card?.querySelector(".draft-chat-text");
+  const message = input?.value?.trim() || "";
+  if (!message) {
+    showDraftMessage(draftId, "请输入修改要求");
+    return;
+  }
+  const done = setBusy(button, "发送中...");
+  showDraftMessage(draftId, "系统正在处理修改要求...", true);
+  try {
+    const res = await api("/api/action-drafts/chat", { method: "POST", body: { draft_id: draftId, message } });
+    upsertById("action_drafts", res.draft);
+    renderActions();
+    setTimeout(() => showDraftMessage(draftId, res.reply || "已处理", true), 0);
+  } catch (err) {
+    showDraftMessage(draftId, err.message);
+  } finally {
+    done();
+  }
 }
 
 function fillAction(id) {

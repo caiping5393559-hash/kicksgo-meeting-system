@@ -31,6 +31,7 @@ SESSION_SECONDS = 60 * 60 * 24 * 7
 SESSION_SECRET = os.environ.get("SESSION_SECRET") or "dev-change-me-kicksgo-weekly-system"
 FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicksgo_meeting")
 AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
+MEETING_HOST_ROLE_ID = "role_meeting_host"
 
 AGENDA_REVIEW = "回顾上周会议纪要"
 AGENDA_AGENCY = "美国代运营内部评估"
@@ -418,6 +419,7 @@ def default_state() -> dict[str, Any]:
         "weekly_reports": [],
         "pre_meeting_notes": [],
         "transcript_uploads": [],
+        "action_drafts": [],
         "action_items": [],
         "audit_logs": [],
     }
@@ -711,8 +713,12 @@ def user_has_business_role(user: dict[str, Any], role_id: str) -> bool:
     return role_id in (user.get("business_role_ids") or [])
 
 
+def can_manage_actions(user: dict[str, Any]) -> bool:
+    return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID)
+
+
 def can_read_transcript_record(user: dict[str, Any], record: dict[str, Any]) -> bool:
-    if is_manager(user):
+    if can_manage_actions(user):
         return True
     return record.get("part") == "part1" and user_has_business_role(user, AGENCY_OPS_ROLE_ID)
 
@@ -952,6 +958,412 @@ def build_transcript_record(
     }
 
 
+def person_display_name(person: dict[str, Any] | None) -> str:
+    if not person:
+        return ""
+    return str(
+        person.get("display_name")
+        or person.get("real_name")
+        or person.get("chinese_name")
+        or person.get("english_name")
+        or person.get("id")
+        or ""
+    )
+
+
+def registered_people(state: dict[str, Any]) -> list[dict[str, Any]]:
+    people_by_id = {str(person.get("id")): person for person in state.get("people", [])}
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for account in state.get("users", []):
+        person_id = str(account.get("person_id") or "")
+        if account.get("status") == "disabled" or not person_id or person_id in seen:
+            continue
+        person = people_by_id.get(person_id)
+        if person:
+            seen.add(person_id)
+            result.append(person)
+    return result
+
+
+def text_has_alias(text: str, alias: str) -> bool:
+    alias = str(alias or "").strip()
+    if not alias:
+        return False
+    if re.search(r"[A-Za-z0-9]", alias):
+        return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", text, re.IGNORECASE))
+    return alias in text
+
+
+def person_aliases(person: dict[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    for value in [
+        person.get("real_name"),
+        person.get("chinese_name"),
+        person.get("english_name"),
+        person.get("display_name"),
+        *(person.get("meeting_aliases") or []),
+        *(person.get("mention_aliases") or []),
+    ]:
+        alias = str(value or "").strip()
+        if alias and alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
+def match_person_from_text(state: dict[str, Any], text: str) -> dict[str, Any] | None:
+    text = str(text or "")
+    entries: list[tuple[str, dict[str, Any]]] = []
+    stop_aliases = {"我", "俺", "me", "my", "mine", "自己", "大家", "所有人"}
+    for person in registered_people(state):
+        for alias in person_aliases(person):
+            key = normalize_name(alias)
+            if not key or key in stop_aliases:
+                continue
+            if len(key) < 2 and not re.search(r"[A-Za-z0-9]", alias):
+                continue
+            entries.append((alias, person))
+    entries.sort(key=lambda item: len(item[0]), reverse=True)
+    for alias, person in entries:
+        if text_has_alias(text, alias):
+            return person
+    return None
+
+
+def match_speaker_person(state: dict[str, Any], speaker: str) -> dict[str, Any] | None:
+    speaker_key = normalize_name(speaker)
+    if not speaker_key:
+        return None
+    for person in registered_people(state):
+        for alias in [
+            person.get("real_name"),
+            person.get("chinese_name"),
+            person.get("english_name"),
+            person.get("display_name"),
+            *(person.get("meeting_aliases") or []),
+        ]:
+            if normalize_name(str(alias or "")) == speaker_key:
+                return person
+    return None
+
+
+def role_owner_person(state: dict[str, Any], role_id: str) -> dict[str, Any] | None:
+    for account in state.get("users", []):
+        if account.get("status") == "disabled":
+            continue
+        if role_id not in (account.get("business_role_ids") or []):
+            continue
+        person = person_by_id(state, str(account.get("person_id") or ""))
+        if person:
+            return person
+    return None
+
+
+def role_owner_from_text(state: dict[str, Any], text: str) -> tuple[dict[str, Any] | None, str]:
+    text = str(text or "")
+    for role in state.get("business_roles", []):
+        aliases = [role.get("name"), role.get("category"), role.get("description"), *(role.get("aliases") or [])]
+        if any(text_has_alias(text, str(alias or "")) for alias in aliases):
+            person = role_owner_person(state, str(role.get("id") or ""))
+            if person:
+                return person, str(role.get("name") or "")
+
+    keyword_roles = [
+        ("role_us_warehouse", ["美国仓库", "US warehouse", "USPS", "UPS", "发货", "履约", "丢件", "退件", "错发", "漏发"]),
+        ("role_sz_warehouse", ["深圳仓库", "国内仓库", "打包", "国内发货"]),
+        ("role_sz_product_ops", ["采购", "补货", "货品", "SKU", "价格", "选品", "断货", "缺货", "爆款"]),
+        ("role_sz_finance", ["财务", "利润", "成本", "账", "回款", "付款"]),
+        ("role_cn_tech", ["系统", "账号", "权限", "数据", "上传", "自动", "数据库", "网页", "登录", "注册", "绑定"]),
+        ("role_us_agency_ops", ["直播", "主播", "达人", "联盟", "短视频", "GMV", "转化", "店铺", "Kyle", "凯尔"]),
+        ("role_meeting_host", ["主持", "纪要", "会议流程", "会议链接", "会后"]),
+    ]
+    for role_id, keywords in keyword_roles:
+        if any(text_has_alias(text, keyword) for keyword in keywords):
+            role = business_role_by_id(state, role_id)
+            person = role_owner_person(state, role_id)
+            if person:
+                return person, str(role.get("name") if role else role_id)
+    return None, ""
+
+
+def parse_transcript_line(state: dict[str, Any], line: str) -> tuple[str, str, str]:
+    line = str(line or "").strip()
+    patterns = [
+        re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*(?=\S)"),
+        re.compile(r"^([^：:\n]{1,40})\s+\d{1,2}:\d{2}(?::\d{2})?\s+"),
+        re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*(?=\S)"),
+    ]
+    for pattern in patterns:
+        match = pattern.match(line)
+        if not match:
+            continue
+        speaker = match.group(1).strip()
+        body = line[match.end():].strip()
+        person = match_speaker_person(state, speaker)
+        return speaker, str(person.get("id") if person else ""), body or line
+    return "", "", line
+
+
+def looks_like_action_item(text: str) -> bool:
+    body = str(text or "").strip()
+    if len(body) < 6:
+        return False
+    if len(body) > 260:
+        body = body[:260]
+    normalized = body.lower()
+    weak_replies = {"好的", "好", "对", "嗯", "可以", "没问题", "ok", "okay", "yes"}
+    if normalize_name(body) in {normalize_name(value) for value in weak_replies}:
+        return False
+    strong_keywords = [
+        "行动项", "负责", "跟进", "落实", "下周", "本周", "今天", "明天", "必须",
+        "确认", "处理", "解决", "安排", "完成", "推进", "复盘", "截止",
+        "todo", "action", "owner", "follow up", "next week", "deadline",
+    ]
+    if any(keyword in normalized for keyword in strong_keywords):
+        return True
+    if re.search(r"我来|我负责|我会|我去|我这边|我处理|我跟进|我安排", body):
+        return True
+    verbs = ["需要", "要", "让", "把", "请", "先", "再", "上传", "整理", "导出", "联系", "补货", "发货", "修改", "创建", "开通", "同步", "检查", "统计"]
+    return any(verb in body for verb in verbs) and any(anchor in body for anchor in ["需要", "要", "让", "把", "请", "下周", "本周", "今天", "明天"])
+
+
+def clean_action_title(text: str) -> str:
+    title = re.sub(r"\s+", " ", str(text or "")).strip()
+    title = re.sub(r"^(行动项|任务|todo|action)\s*[：:，,]?\s*", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"^(然后|那|这个|就是|所以|我们|大家)\s*", "", title)
+    title = title.strip(" ，。；;")
+    if len(title) > 160:
+        title = title[:157].rstrip() + "..."
+    return title
+
+
+def infer_action_owner(state: dict[str, Any], body: str, speaker_person_id: str = "") -> tuple[str, str, str]:
+    person = match_person_from_text(state, body)
+    if person:
+        return str(person.get("id") or ""), person_display_name(person), "会议文字明确提到"
+    if speaker_person_id and re.search(r"我来|我负责|我去|我会|我这边|我处理|我跟进|我安排", body):
+        person = person_by_id(state, speaker_person_id)
+        if person:
+            return speaker_person_id, person_display_name(person), "发言人自认负责"
+    role_person, role_name = role_owner_from_text(state, body)
+    if role_person:
+        return str(role_person.get("id") or ""), person_display_name(role_person), f"按业务角色判断：{role_name}"
+    return "", "", "待管理员确认"
+
+
+def infer_action_priority(text: str) -> str:
+    body = str(text or "")
+    if any(keyword in body for keyword in ["今天", "马上", "立刻", "紧急", "卡住", "必须先"]):
+        return "P0-今天处理"
+    if any(keyword in body for keyword in ["观察", "看看", "待观察", "待定"]):
+        return "P2-观察"
+    if any(keyword in body for keyword in ["低优先", "不急"]):
+        return "P3-低优先"
+    return "P1-本周必须"
+
+
+def parse_due_date(text: str) -> str:
+    raw = str(text or "")
+    match = re.search(r"(20\d{2})[-/年](\d{1,2})[-/月](\d{1,2})", raw)
+    if match:
+        year, month, day = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    match = re.search(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?", raw)
+    if match:
+        year = datetime.now(timezone.utc).year
+        month, day = (int(match.group(1)), int(match.group(2)))
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    match = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", raw)
+    if match:
+        year, month, day = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    return ""
+
+
+def extract_action_draft_items(state: dict[str, Any], content: str, part: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_line in str(content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        speaker, speaker_person_id, body = parse_transcript_line(state, line)
+        if not looks_like_action_item(body):
+            continue
+        title = clean_action_title(body)
+        if len(title) < 6:
+            continue
+        key = normalize_name(title[:100])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        owner_person_id, owner_text, confidence = infer_action_owner(state, body, speaker_person_id)
+        notes = f"来源发言：{speaker or '会议文字'}"
+        if confidence:
+            notes += f"；负责人判断：{confidence}"
+        items.append(
+            {
+                "id": new_id("draftitem"),
+                "title": title,
+                "owner_person_id": owner_person_id,
+                "owner_text": owner_text,
+                "due_date": parse_due_date(body),
+                "priority": infer_action_priority(body),
+                "status": "未开始",
+                "notes": notes,
+                "part": part,
+                "source_excerpt": body[:220],
+                "confidence": confidence,
+            }
+        )
+        if len(items) >= 12:
+            break
+    return items
+
+
+def create_action_draft(
+    state: dict[str, Any],
+    user: dict[str, Any],
+    meeting_id: str,
+    transcript_id: str,
+    part: str,
+    content: str,
+    filename: str,
+) -> dict[str, Any]:
+    items = extract_action_draft_items(state, content, part)
+    draft = {
+        "id": new_id("draft"),
+        "meeting_id": meeting_id,
+        "transcript_id": transcript_id,
+        "part": part,
+        "title": "第一部分代运营会议行动项初稿" if part == "part1" else "第二部分内部复盘行动项初稿",
+        "source_filename": filename,
+        "status": "待管理员确认",
+        "items": items,
+        "chat": [
+            {
+                "role": "system",
+                "message": f"系统已根据会议文字生成 {len(items)} 条行动项初稿。请管理员或主持人确认负责人、截止日期和优先级后再生成正式行动项。",
+                "created_at": now_iso(),
+            }
+        ],
+        "created_by": user.get("id"),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    state.setdefault("action_drafts", []).insert(0, draft)
+    return draft
+
+
+def normalize_draft_item(state: dict[str, Any], item: dict[str, Any], part: str) -> dict[str, Any]:
+    owner_person_id = str(item.get("owner_person_id") or "")
+    if owner_person_id and not person_by_id(state, owner_person_id):
+        owner_person_id = ""
+    return {
+        "id": str(item.get("id") or new_id("draftitem")),
+        "title": clean_action_title(item.get("title") or ""),
+        "owner_person_id": owner_person_id,
+        "owner_text": str(item.get("owner_text") or ""),
+        "due_date": str(item.get("due_date") or ""),
+        "priority": str(item.get("priority") or "P1-本周必须"),
+        "status": str(item.get("status") or "未开始"),
+        "notes": str(item.get("notes") or ""),
+        "part": str(item.get("part") or part or "part2"),
+        "source_excerpt": str(item.get("source_excerpt") or "")[:300],
+        "confidence": str(item.get("confidence") or ""),
+    }
+
+
+def find_action_draft(state: dict[str, Any], draft_id: str) -> dict[str, Any] | None:
+    return next((draft for draft in state.get("action_drafts", []) if draft.get("id") == draft_id), None)
+
+
+def item_number_from_text(text: str) -> int | None:
+    match = re.search(r"第\s*(\d{1,2})\s*条", str(text or ""))
+    if match:
+        return int(match.group(1)) - 1
+    zh = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "七": 6, "八": 7, "九": 8, "十": 9}
+    match = re.search(r"第\s*([一二三四五六七八九十])\s*条", str(text or ""))
+    if match:
+        return zh.get(match.group(1))
+    return None
+
+
+def apply_draft_chat_command(state: dict[str, Any], draft: dict[str, Any], message: str) -> str:
+    message = str(message or "").strip()
+    items = draft.setdefault("items", [])
+    index = item_number_from_text(message)
+    lower = message.lower()
+
+    if ("新增" in message or "增加" in message or "加一条" in message or "加一个" in message) and "删除" not in message:
+        title = re.sub(r"^.*?(新增|增加|加一条|加一个)\s*(行动项|任务)?[：:，,]?\s*", "", message).strip()
+        title = re.split(r"负责人|由|给|截止|优先级", title)[0].strip(" ：:，,。")
+        if not title:
+            title = clean_action_title(message)
+        owner_person_id, owner_text, confidence = infer_action_owner(state, message, "")
+        items.append(
+            {
+                "id": new_id("draftitem"),
+                "title": clean_action_title(title),
+                "owner_person_id": owner_person_id,
+                "owner_text": owner_text,
+                "due_date": parse_due_date(message),
+                "priority": infer_action_priority(message),
+                "status": "未开始",
+                "notes": f"管理员对话新增；负责人判断：{confidence}",
+                "part": draft.get("part") or "part2",
+                "source_excerpt": message[:220],
+                "confidence": confidence,
+            }
+        )
+        return f"已新增 1 条行动项：{clean_action_title(title)}"
+
+    if index is not None and 0 <= index < len(items):
+        item = items[index]
+        changes: list[str] = []
+        if "删除" in message:
+            removed = items.pop(index)
+            return f"已删除第 {index + 1} 条：{removed.get('title') or ''}"
+        if "负责人" in message or "给" in message or "由" in message:
+            person = match_person_from_text(state, message)
+            if not person:
+                person, _role_name = role_owner_from_text(state, message)
+            if person:
+                item["owner_person_id"] = str(person.get("id") or "")
+                item["owner_text"] = person_display_name(person)
+                changes.append(f"负责人改为 {person_display_name(person)}")
+        due_date = parse_due_date(message)
+        if due_date:
+            item["due_date"] = due_date
+            changes.append(f"截止日期改为 {due_date}")
+        priority = ""
+        match = re.search(r"\b(P[0-3])\b", message, re.IGNORECASE)
+        if match:
+            priority = {"P0": "P0-今天处理", "P1": "P1-本周必须", "P2": "P2-观察", "P3": "P3-低优先"}[match.group(1).upper()]
+        elif "优先级" in message:
+            priority = infer_action_priority(message)
+        if priority:
+            item["priority"] = priority
+            changes.append(f"优先级改为 {priority}")
+        if "事项" in message or "标题" in message or "内容" in message:
+            changed = re.split(r"改成|改为|换成", message, maxsplit=1)
+            if len(changed) > 1:
+                title = clean_action_title(changed[1])
+                if title:
+                    item["title"] = title
+                    changes.append("事项内容已修改")
+        if "备注" in message:
+            changed = re.split(r"改成|改为|换成|备注", message, maxsplit=1)
+            if len(changed) > 1:
+                item["notes"] = changed[1].strip(" ：:，,。") or item.get("notes", "")
+                changes.append("备注已修改")
+        return "；".join(changes) if changes else "我没有识别到具体修改，请用“第1条负责人改成蔡平 / 第2条删除 / 新增一条……”这样的格式，或直接在上方表格修改后保存草稿。"
+
+    if "删除" in message or "负责人" in message or "改成" in message or "改为" in message:
+        return "请说明要修改第几条，例如：第1条负责人改成蔡平。也可以直接在上方表格修改后保存草稿。"
+    return "我已记录这条修改意见；如果要让我直接修改草稿，请写清楚第几条、改什么。"
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "KicksgoMeetingSystem/1.0"
 
@@ -1049,6 +1461,15 @@ class AppHandler(BaseHTTPRequestHandler):
         if path == "/api/transcripts/upload":
             self.handle_upload_transcript(state, user, payload)
             return
+        if path == "/api/action-drafts/save":
+            self.handle_save_action_draft(state, user, payload)
+            return
+        if path == "/api/action-drafts/chat":
+            self.handle_action_draft_chat(state, user, payload)
+            return
+        if path == "/api/action-drafts/approve":
+            self.handle_approve_action_draft(state, user, payload)
+            return
         if path == "/api/actions/save":
             self.handle_save_action(state, user, payload)
             return
@@ -1130,7 +1551,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return user
 
     def scoped_state(self, state: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-        if is_manager(user):
+        if can_manage_actions(user):
             return {
                 "users": [sanitize_user(u) for u in state.get("users", [])],
                 "people": state.get("people", []),
@@ -1140,6 +1561,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "weekly_reports": state.get("weekly_reports", []),
                 "pre_meeting_notes": state.get("pre_meeting_notes", []),
                 "transcript_uploads": state.get("transcript_uploads", []),
+                "action_drafts": state.get("action_drafts", []),
                 "action_items": state.get("action_items", []),
                 "audit_logs": state.get("audit_logs", [])[-80:] if is_admin(user) else [],
             }
@@ -1170,7 +1592,8 @@ class AppHandler(BaseHTTPRequestHandler):
             ],
             "pre_meeting_notes": [n for n in state.get("pre_meeting_notes", []) if n.get("person_id") == person_id],
             "transcript_uploads": visible_transcripts,
-            "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") in {"", person_id}],
+            "action_drafts": [],
+            "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") == person_id],
             "audit_logs": [],
         }
 
@@ -1375,8 +1798,8 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "note": saved})
 
     def handle_upload_transcript(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
-        if not is_manager(user):
-            self.send_json({"ok": False, "error": "Only manager/admin can upload transcripts"}, 403)
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以上传会议文字记录"}, 403)
             return
         content = str(payload.get("content") or "")
         if len(content.strip()) < 10:
@@ -1395,6 +1818,7 @@ class AppHandler(BaseHTTPRequestHandler):
         else:
             pieces.append((selected_part, content))
         records: list[dict[str, Any]] = []
+        drafts: list[dict[str, Any]] = []
         for part, part_content in pieces:
             transcript_id = new_id("transcript")
             record = build_transcript_record(
@@ -1410,16 +1834,108 @@ class AppHandler(BaseHTTPRequestHandler):
             store.save_transcript_content(transcript_id, part_content)
             state["transcript_uploads"].append(record)
             records.append(record)
+            drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, part_content, filename))
         if not records:
             self.send_json({"ok": False, "error": "自动切分后没有可保存的文字内容"}, 400)
             return
         audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": records[0], "records": records, "split_marker": split_marker})
+        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker})
+
+    def handle_save_action_draft(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以修改行动项初稿"}, 403)
+            return
+        draft = find_action_draft(state, str(payload.get("id") or ""))
+        if not draft:
+            self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
+            return
+        part = str(payload.get("part") or draft.get("part") or "part2")
+        items = payload.get("items") or []
+        if not isinstance(items, list):
+            self.send_json({"ok": False, "error": "行动项初稿格式错误"}, 400)
+            return
+        draft["items"] = [normalize_draft_item(state, item, part) for item in items if clean_action_title(item.get("title") or "")]
+        draft["part"] = part
+        draft["status"] = str(payload.get("status") or draft.get("status") or "待管理员确认")
+        draft["updated_at"] = now_iso()
+        draft["updated_by"] = user.get("id")
+        audit(state, user, "save_action_draft", {"draft_id": draft.get("id"), "item_count": len(draft["items"])})
+        store.save(state, "save_action_draft")
+        self.send_json({"ok": True, "draft": draft})
+
+    def handle_action_draft_chat(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以修改行动项初稿"}, 403)
+            return
+        draft = find_action_draft(state, str(payload.get("draft_id") or payload.get("id") or ""))
+        if not draft:
+            self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
+            return
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            self.send_json({"ok": False, "error": "请输入修改要求"}, 400)
+            return
+        draft.setdefault("chat", []).append({"role": "user", "message": message, "created_at": now_iso(), "user_id": user.get("id")})
+        reply = apply_draft_chat_command(state, draft, message)
+        draft.setdefault("chat", []).append({"role": "assistant", "message": reply, "created_at": now_iso()})
+        draft["updated_at"] = now_iso()
+        draft["updated_by"] = user.get("id")
+        audit(state, user, "chat_action_draft", {"draft_id": draft.get("id")})
+        store.save(state, "chat_action_draft")
+        self.send_json({"ok": True, "draft": draft, "reply": reply})
+
+    def handle_approve_action_draft(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以确认行动项初稿"}, 403)
+            return
+        draft = find_action_draft(state, str(payload.get("draft_id") or payload.get("id") or ""))
+        if not draft:
+            self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
+            return
+        created_actions: list[dict[str, Any]] = []
+        for item in draft.get("items", []):
+            normalized = normalize_draft_item(state, item, str(draft.get("part") or "part2"))
+            if not normalized.get("title"):
+                continue
+            action = {
+                "id": new_id("action"),
+                "meeting_id": str(draft.get("meeting_id") or ""),
+                "part": normalized.get("part") or draft.get("part") or "part2",
+                "title": normalized["title"],
+                "owner_person_id": normalized.get("owner_person_id", ""),
+                "owner_text": normalized.get("owner_text", ""),
+                "due_date": normalized.get("due_date", ""),
+                "priority": normalized.get("priority", "P1-本周必须"),
+                "status": normalized.get("status", "未开始"),
+                "notes": normalized.get("notes", ""),
+                "source_draft_id": draft.get("id"),
+                "source_transcript_id": draft.get("transcript_id"),
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+                "created_by": user.get("id"),
+                "updated_by": user.get("id"),
+            }
+            state.setdefault("action_items", []).insert(0, action)
+            created_actions.append(action)
+        draft["status"] = "已确认生成行动项"
+        draft["confirmed_at"] = now_iso()
+        draft["confirmed_by"] = user.get("id")
+        draft["updated_at"] = now_iso()
+        draft.setdefault("chat", []).append(
+            {
+                "role": "system",
+                "message": f"已生成 {len(created_actions)} 条正式行动项，并分发到负责人本周落实行动项目。",
+                "created_at": now_iso(),
+            }
+        )
+        audit(state, user, "approve_action_draft", {"draft_id": draft.get("id"), "action_count": len(created_actions)})
+        store.save(state, "approve_action_draft")
+        self.send_json({"ok": True, "draft": draft, "actions": created_actions})
 
     def handle_save_action(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
-        if not is_manager(user):
-            self.send_json({"ok": False, "error": "Only manager/admin can edit action items"}, 403)
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以编辑行动项"}, 403)
             return
         item_id = str(payload.get("id") or "")
         existing = next((a for a in state["action_items"] if a.get("id") == item_id), None)
@@ -1456,7 +1972,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if collection == "pre_meeting_notes" and not is_manager(user) and item.get("person_id") != user.get("person_id"):
             self.send_json({"ok": False, "error": "No permission"}, 403)
             return
-        if collection == "action_items" and not is_manager(user):
+        if collection == "action_items" and not can_manage_actions(user):
             self.send_json({"ok": False, "error": "No permission"}, 403)
             return
         state[collection] = [i for i in items if i.get("id") != item_id]

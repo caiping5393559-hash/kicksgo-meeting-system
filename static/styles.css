@@ -794,6 +794,85 @@ tr:last-child td {
   color: var(--red);
 }
 
+.draft-card {
+  display: grid;
+  gap: 14px;
+}
+
+.draft-table table {
+  min-width: 1180px;
+}
+
+.draft-table textarea {
+  min-height: 58px;
+}
+
+.draft-table .row-index {
+  width: 36px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.draft-chat {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.draft-chat-log {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px;
+}
+
+.draft-chat-message {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.draft-chat-message.user {
+  border-left-color: var(--blue);
+}
+
+.draft-chat-message.assistant,
+.draft-chat-message.system {
+  border-left-color: var(--teal);
+}
+
+.draft-chat-message strong {
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.draft-chat-message p {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.draft-chat-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 @media (max-width: 920px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -816,6 +895,7 @@ tr:last-child td {
   .grid.four,
   .agenda-row,
   .metric-row,
+  .draft-chat-input,
   .form-grid,
   .form-grid.two,
   .password-notice form {
