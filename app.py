@@ -959,8 +959,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self.handle_login(payload)
             return
         if path == "/api/logout":
-            self.set_cookie("", max_age=0)
-            self.send_json({"ok": True})
+            self.handle_logout()
             return
 
         state = store.load()
@@ -1036,6 +1035,8 @@ class AppHandler(BaseHTTPRequestHandler):
         cookie[SESSION_COOKIE]["httponly"] = True
         cookie[SESSION_COOKIE]["samesite"] = "Lax"
         cookie[SESSION_COOKIE]["max-age"] = str(max_age)
+        if max_age <= 0:
+            cookie[SESSION_COOKIE]["expires"] = "Thu, 01 Jan 1970 00:00:00 GMT"
         self.send_header("Set-Cookie", cookie.output(header="").strip())
 
     def current_user(self, state: dict[str, Any]) -> dict[str, Any] | None:
@@ -1173,6 +1174,15 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.set_cookie(token)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_logout(self) -> None:
+        body = json.dumps({"ok": True}, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.set_cookie("", max_age=0)
         self.end_headers()
         self.wfile.write(body)
 

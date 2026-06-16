@@ -1290,11 +1290,15 @@ qs("#registerForm").addEventListener("submit", async (event) => {
 });
 
 qs("#logoutBtn").addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST", body: {} });
-  app.user = null;
-  app.person = null;
-  app.data = null;
-  renderAuth();
+  try {
+    await api("/api/logout", { method: "POST", body: {} });
+  } finally {
+    app.user = null;
+    app.person = null;
+    app.data = null;
+    app.page = "dashboard";
+    renderAuth();
+  }
 });
 
 qs("#changePasswordForm").addEventListener("submit", async (event) => {
