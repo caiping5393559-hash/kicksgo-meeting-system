@@ -857,19 +857,34 @@ function renderAdmin() {
 
       <div class="panel">
         <h2>业务角色职责 / 账号绑定</h2>
-        <p class="hint">系统已有默认业务角色和默认职责；绑定账号支持多选，直接勾选多个账号后保存。</p>
+        <p class="hint">系统已有默认业务角色和默认职责；可以新增角色，也可以修改角色名称、职责、会议说法和绑定账号。默认角色不能删除，自定义新增角色可以删除。</p>
+        <form id="createRoleForm" class="inline-form-panel">
+          <h3>新增业务角色</h3>
+          <div class="form-grid">
+            <label>角色名称<input name="name" required placeholder="例如：美国投手、售后客服" /></label>
+            <label class="field-wide">职责说明<textarea name="description" placeholder="这个角色主要负责什么业务"></textarea></label>
+            <label class="field-wide">会议说法<textarea name="aliases" placeholder="会议里可能怎么叫这个角色，多个用逗号或换行分隔"></textarea></label>
+          </div>
+          <div class="split-actions" style="margin-top:12px">
+            <button type="submit">新增角色</button>
+            <span id="createRoleMessage" class="message"></span>
+          </div>
+        </form>
         <div class="table-wrap">
           <table>
             <thead><tr><th>业务角色</th><th>职责（可修改）</th><th>会议说法（可修改）</th><th>绑定账号</th><th>操作</th></tr></thead>
             <tbody>
               ${businessRoles.map((role) => `
                 <tr data-role-id="${role.id}">
-                  <td><strong>${escapeHtml(role.name)}</strong></td>
+                  <td><input class="role-name compact-input" value="${escapeHtml(role.name)}" /></td>
                   <td><textarea class="role-description compact-textarea">${escapeHtml(role.description || "")}</textarea></td>
                   <td><textarea class="role-aliases compact-textarea" placeholder="例如：主持人, 周会主持人">${escapeHtml((role.aliases || []).join(", "))}</textarea></td>
                   <td><div class="checkbox-grid user-checkboxes">${userCheckboxes(role.id)}</div></td>
                   <td class="role-action-cell">
-                    <button type="button" class="plain-btn save-role-users">保存职责和绑定</button>
+                    <div class="split-actions">
+                      <button type="button" class="plain-btn save-role-users">保存角色</button>
+                      ${role.id.startsWith("role_") ? "" : '<button type="button" class="plain-btn danger-text delete-business-role">删除</button>'}
+                    </div>
                     <span class="inline-status role-row-message"></span>
                   </td>
                 </tr>
@@ -1042,6 +1057,8 @@ function wireAdmin() {
     }
   });
   document.querySelectorAll(".save-role-users").forEach((btn) => btn.addEventListener("click", saveRoleUsers));
+  qs("#createRoleForm")?.addEventListener("submit", createBusinessRole);
+  document.querySelectorAll(".delete-business-role").forEach((btn) => btn.addEventListener("click", deleteBusinessRole));
   qs("#personModalForm")?.addEventListener("submit", savePerson);
   document.querySelectorAll(".modal-close").forEach((btn) => btn.addEventListener("click", closePersonModal));
   qs("#personModal")?.addEventListener("click", (event) => {
@@ -1067,6 +1084,15 @@ async function saveRoleUsers(event) {
     .split(/[,，\n]/)
     .map((value) => value.trim())
     .filter(Boolean);
+  const roleName = String(row.querySelector(".role-name")?.value || "").trim();
+  if (!roleName) {
+    showMessage("#roleMessage", "业务角色名称不能为空");
+    if (status) {
+      status.textContent = "业务角色名称不能为空";
+      status.className = "inline-status role-row-message error";
+    }
+    return;
+  }
   try {
     button.disabled = true;
     button.textContent = "保存中...";
@@ -1078,7 +1104,7 @@ async function saveRoleUsers(event) {
       method: "POST",
       body: {
         id: role.id,
-        name: role.name,
+        name: roleName,
         description: row.querySelector(".role-description")?.value || "",
         aliases,
       },
@@ -1091,11 +1117,8 @@ async function saveRoleUsers(event) {
       },
     });
     await refresh();
-    if (status) {
-      status.textContent = `已保存，当前绑定 ${userIds.length} 个账号`;
-      status.className = "inline-status role-row-message success";
-    }
-    showMessage("#roleMessage", `已保存：${role.name}，绑定 ${userIds.length} 个账号`, true);
+    renderAdmin();
+    setTimeout(() => showMessage("#roleMessage", `已保存：${roleName}，绑定 ${userIds.length} 个账号`, true), 0);
   } catch (err) {
     if (status) {
       status.textContent = err.message;
@@ -1105,6 +1128,40 @@ async function saveRoleUsers(event) {
   } finally {
     button.disabled = false;
     button.textContent = originalText;
+  }
+}
+
+async function createBusinessRole(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = Object.fromEntries(new FormData(form).entries());
+  body.aliases = String(body.aliases || "")
+    .split(/[,，\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  try {
+    const res = await api("/api/admin/save-business-role", { method: "POST", body });
+    form.reset();
+    await refresh();
+    renderAdmin();
+    setTimeout(() => showMessage("#createRoleMessage", `已新增角色：${res.business_role.name}`, true), 0);
+  } catch (err) {
+    showMessage("#createRoleMessage", err.message);
+  }
+}
+
+async function deleteBusinessRole(event) {
+  event.preventDefault();
+  const row = event.currentTarget.closest("tr");
+  const roleName = String(row.querySelector(".role-name")?.value || "这个角色").trim();
+  if (!confirm(`确定删除业务角色「${roleName}」？删除后会同时解除这个角色和账号的绑定。`)) return;
+  try {
+    await api("/api/admin/delete-business-role", { method: "POST", body: { id: row.dataset.roleId } });
+    await refresh();
+    renderAdmin();
+    setTimeout(() => showMessage("#roleMessage", `已删除业务角色：${roleName}`, true), 0);
+  } catch (err) {
+    showMessage("#roleMessage", err.message);
   }
 }
 
