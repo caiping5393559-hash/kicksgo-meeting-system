@@ -1371,6 +1371,25 @@ class AppHandler(BaseHTTPRequestHandler):
             store.save(state, "admin_save_user")
             self.send_json({"ok": True, "user": sanitize_user(target)})
             return
+        if path == "/api/admin/delete-user":
+            target_id = str(payload.get("user_id") or payload.get("id") or "")
+            if target_id == user.get("id"):
+                self.send_json({"ok": False, "error": "不能删除当前登录的管理员账号"}, 400)
+                return
+            target = user_by_id(state, target_id)
+            if not target:
+                self.send_json({"ok": False, "error": "用户不存在"}, 404)
+                return
+            person_id = str(target.get("person_id") or "")
+            state["users"] = [account for account in state.get("users", []) if account.get("id") != target_id]
+            if person_id and not any(account.get("person_id") == person_id for account in state.get("users", [])):
+                person = person_by_id(state, person_id)
+                if person:
+                    person["has_login"] = False
+            audit(state, user, "admin_delete_user", {"user_id": target_id, "username": target.get("username")})
+            store.save(state, "admin_delete_user")
+            self.send_json({"ok": True})
+            return
         if path == "/api/admin/reset-password":
             target = user_by_id(state, str(payload.get("user_id") or ""))
             if not target:

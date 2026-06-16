@@ -41,7 +41,10 @@
                 </div>
               </div>
             </div>
-            <label>业务角色<select id="registerBusinessRoles" name="business_role_ids" class="multi-select" multiple size="8" required><option disabled>正在加载业务角色...</option></select></label>
+            <div class="alias-label">
+              <span>业务角色</span>
+              <div id="registerBusinessRoles" class="checkbox-grid role-checkboxes"><span class="muted">正在加载业务角色...</span></div>
+            </div>
             <label>密码<input name="password" type="password" autocomplete="new-password" required /></label>
             <button type="submit">提交注册</button>
             <div class="hint">业务角色必须至少选择一个，可以多选。提交后本人不能更改，只能由管理员后台调整。</div>

@@ -561,6 +561,38 @@ tr:last-child td {
   padding: 6px;
 }
 
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.check-row input {
+  width: auto;
+  margin: 0;
+  box-shadow: none;
+}
+
+.check-row span {
+  overflow-wrap: anywhere;
+}
+
 .alias-editor {
   display: grid;
   gap: 8px;

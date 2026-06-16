@@ -133,6 +133,21 @@ function selectedValues(select) {
   return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
 }
 
+function checkedValues(root, name) {
+  return Array.from(root?.querySelectorAll(`input[name="${name}"]:checked`) || []).map((input) => input.value).filter(Boolean);
+}
+
+function checkboxOptions(items, selected = [], name = "business_role_ids", emptyText = "暂无可选项") {
+  const selectedSet = new Set(selected || []);
+  if (!items.length) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
+  return items.map((item) => `
+    <label class="check-row">
+      <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? "checked" : ""} />
+      <span>${escapeHtml(item.name || item.label || item.username || item.id)}</span>
+    </label>
+  `).join("");
+}
+
 function splitAliasValues(value) {
   const raw = Array.isArray(value) ? value : String(value || "").split(/[,，\n\r]/);
   const values = [];
@@ -242,15 +257,21 @@ function renderAuth() {
 }
 
 function renderRegisterBusinessRoles() {
-  const select = qs("#registerBusinessRoles");
-  if (!select) return;
+  const box = qs("#registerBusinessRoles");
+  if (!box) return;
   if (!app.publicRoles.length) {
-    select.innerHTML = `<option disabled>正在加载业务角色...</option>`;
+    box.innerHTML = `<span class="muted">正在加载业务角色...</span>`;
     return;
   }
-  select.innerHTML = app.publicRoles
-    .map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.name)}${role.category ? ` / ${escapeHtml(role.category)}` : ""}</option>`)
-    .join("");
+  box.innerHTML = checkboxOptions(
+    app.publicRoles.map((role) => ({
+      id: role.id,
+      name: `${role.name}${role.category ? ` / ${role.category}` : ""}`,
+    })),
+    [],
+    "business_role_ids",
+    "暂无业务角色"
+  );
 }
 
 async function loadPublicConfig() {
@@ -259,8 +280,8 @@ async function loadPublicConfig() {
     app.publicRoles = res.business_roles || [];
     renderRegisterBusinessRoles();
   } catch (err) {
-    const select = qs("#registerBusinessRoles");
-    if (select) select.innerHTML = `<option disabled>业务角色加载失败，请刷新页面</option>`;
+    const box = qs("#registerBusinessRoles");
+    if (box) box.innerHTML = `<span class="muted">业务角色加载失败，请刷新页面</span>`;
   }
 }
 
@@ -757,13 +778,21 @@ function renderAdmin() {
   const businessRoles = app.data.business_roles || [];
   const links = app.data.settings?.meeting_links || [];
   const meetings = app.data.meetings || [];
-  const roleSelectOptions = (selected = []) => businessRoles.map((role) => `<option value="${role.id}" ${selected.includes(role.id) ? "selected" : ""}>${escapeHtml(role.name)}</option>`).join("");
-  const userSelectOptions = (roleId) => users.map((u) => `<option value="${u.id}" ${(u.business_role_ids || []).includes(roleId) ? "selected" : ""}>${escapeHtml(u.username)}${u.person_id ? ` / ${escapeHtml(personName(u.person_id))}` : ""}</option>`).join("");
+  const roleCheckboxes = (selected = []) => checkboxOptions(businessRoles, selected, "business_role_ids", "暂无业务角色");
+  const userCheckboxes = (roleId) => checkboxOptions(
+    users.map((u) => ({
+      id: u.id,
+      name: `${u.username}${u.person_id ? ` / ${personName(u.person_id)}` : ""}`,
+    })),
+    users.filter((u) => (u.business_role_ids || []).includes(roleId)).map((u) => u.id),
+    "user_ids",
+    "暂无账号"
+  );
   qs("#content").innerHTML = `
     <div class="grid">
       <div class="panel">
         <h2>账号权限 / 人员绑定</h2>
-        <p class="hint">系统权限只控制能不能管理系统；业务角色用于区分合伙人、仓库、财务、技术等现实职责，一个账号可以有多个业务角色。</p>
+        <p class="hint">系统权限只控制能不能管理系统；业务角色用于区分合伙人、仓库、财务、技术等现实职责，一个账号可以勾选多个业务角色。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
@@ -774,12 +803,13 @@ function renderAdmin() {
                   <td><select class="user-role compact-input"><option ${u.role === "member" ? "selected" : ""}>member</option><option ${u.role === "manager" ? "selected" : ""}>manager</option><option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
                   <td><select class="user-status compact-input"><option ${u.status === "pending" ? "selected" : ""}>pending</option><option ${u.status === "active" ? "selected" : ""}>active</option><option ${u.status === "disabled" ? "selected" : ""}>disabled</option></select></td>
                   <td><select class="user-person"><option value="">未绑定</option>${people.map((p) => `<option value="${p.id}" ${u.person_id === p.id ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></td>
-                  <td>
-                    <select class="user-business-roles multi-select" multiple size="${Math.min(Math.max(businessRoles.length, 4), 8)}">${roleSelectOptions(u.business_role_ids || [])}</select>
-                    <div class="hint">按住 Ctrl 可多选</div>
-                  </td>
+                  <td><div class="checkbox-grid role-checkboxes">${roleCheckboxes(u.business_role_ids || [])}</div></td>
                   <td>${escapeHtml(u.last_login_at || "-")}</td>
-                  <td class="split-actions"><button class="plain-btn save-user">保存</button><button class="plain-btn reset-user">重置密码</button></td>
+                  <td class="split-actions">
+                    <button class="plain-btn save-user">保存</button>
+                    <button class="plain-btn reset-user">重置密码</button>
+                    ${u.id === app.user.id ? '<span class="muted">当前账号不能删除</span>' : '<button class="plain-btn danger-text delete-user">删除</button>'}
+                  </td>
                 </tr>
               `).join("")}
             </tbody>
@@ -796,7 +826,7 @@ function renderAdmin() {
           <label>系统权限<select name="role"><option>member</option><option>manager</option><option>admin</option></select></label>
           <label>状态<select name="status"><option selected>active</option><option>pending</option><option>disabled</option></select></label>
           <label>绑定人员<select name="person_id"><option value="">先不绑定</option>${people.map((p) => `<option value="${p.id}">${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>
-          <label class="field-wide">业务角色<select name="business_role_ids" class="multi-select" multiple size="${Math.min(Math.max(businessRoles.length, 4), 8)}">${roleSelectOptions([])}</select></label>
+          <div class="alias-label field-wide"><span>业务角色</span><div class="checkbox-grid role-checkboxes">${roleCheckboxes([])}</div></div>
         </div>
         <div class="split-actions" style="margin-top:12px"><button type="submit">创建账号</button><span id="createUserMessage" class="message"></span></div>
       </form>
@@ -830,7 +860,7 @@ function renderAdmin() {
                   <td>${escapeHtml(role.category || "")}</td>
                   <td>${escapeHtml(role.description || "")}</td>
                   <td>${escapeHtml((role.aliases || []).join(", "))}</td>
-                  <td><select class="role-users multi-select" multiple size="${Math.min(Math.max(users.length, 3), 7)}">${userSelectOptions(role.id)}</select></td>
+                  <td><div class="checkbox-grid user-checkboxes">${userCheckboxes(role.id)}</div></td>
                   <td class="split-actions"><button class="plain-btn save-role-users">保存绑定</button><button class="plain-btn edit-role" data-id="${role.id}">编辑角色</button>${role.id.startsWith("bizrole_") ? `<button class="plain-btn danger-text delete-role" data-id="${role.id}">删除角色</button>` : ""}</td>
                 </tr>
               `).join("") || '<tr><td colspan="6" class="muted">暂无业务角色</td></tr>'}
@@ -969,7 +999,7 @@ function wireAdmin() {
           role: row.querySelector(".user-role").value,
           status: row.querySelector(".user-status").value,
           person_id: row.querySelector(".user-person").value,
-          business_role_ids: selectedValues(row.querySelector(".user-business-roles")),
+          business_role_ids: checkedValues(row, "business_role_ids"),
         },
       });
       await refresh();
@@ -987,10 +1017,23 @@ function wireAdmin() {
       showMessage("#adminUserMessage", err.message);
     }
   }));
+  document.querySelectorAll(".delete-user").forEach((btn) => btn.addEventListener("click", async () => {
+    const row = btn.closest("tr");
+    const username = row.children[0]?.textContent?.trim() || "这个账号";
+    if (!confirm(`确定删除用户「${username}」？只会删除登录账号，不会删除人员档案。`)) return;
+    try {
+      await api("/api/admin/delete-user", { method: "POST", body: { user_id: row.dataset.userId } });
+      await refresh();
+      renderAdmin();
+      setTimeout(() => showMessage("#adminUserMessage", "用户已删除", true), 0);
+    } catch (err) {
+      showMessage("#adminUserMessage", err.message);
+    }
+  }));
   qs("#createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-    body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
+    body.business_role_ids = checkedValues(event.currentTarget, "business_role_ids");
     try {
       const res = await api("/api/admin/create-user", { method: "POST", body });
       await refresh();
@@ -1058,7 +1101,7 @@ async function saveRoleUsers(event) {
       method: "POST",
       body: {
         role_id: row.dataset.roleId,
-        user_ids: selectedValues(row.querySelector(".role-users")),
+        user_ids: checkedValues(row, "user_ids"),
       },
     });
     await refresh();
@@ -1188,7 +1231,7 @@ qs("#registerForm").addEventListener("submit", async (event) => {
   try {
     collectPendingAliasInputs(event.currentTarget);
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-    body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
+    body.business_role_ids = checkedValues(event.currentTarget, "business_role_ids");
     if (!body.business_role_ids.length) {
       showMessage("#authMessage", "注册时必须至少选择一个业务角色，提交后只能由管理员修改");
       return;
