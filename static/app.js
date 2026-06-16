@@ -1189,6 +1189,10 @@ qs("#registerForm").addEventListener("submit", async (event) => {
     collectPendingAliasInputs(event.currentTarget);
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
+    if (!body.business_role_ids.length) {
+      showMessage("#authMessage", "注册时必须至少选择一个业务角色，提交后只能由管理员修改");
+      return;
+    }
     const res = await api("/api/register", { method: "POST", body });
     showMessage("#authMessage", res.message || "注册已提交", true);
     event.currentTarget.reset();

@@ -41,10 +41,10 @@
                 </div>
               </div>
             </div>
-            <label>业务角色<select id="registerBusinessRoles" name="business_role_ids" class="multi-select" multiple size="8"><option disabled>正在加载业务角色...</option></select></label>
+            <label>业务角色<select id="registerBusinessRoles" name="business_role_ids" class="multi-select" multiple size="8" required><option disabled>正在加载业务角色...</option></select></label>
             <label>密码<input name="password" type="password" autocomplete="new-password" required /></label>
             <button type="submit">提交注册</button>
-            <div class="hint">业务角色可以多选。注册后需要管理员审核，管理员可以继续修改名称匹配和业务角色。</div>
+            <div class="hint">业务角色必须至少选择一个，可以多选。提交后本人不能更改，只能由管理员后台调整。</div>
           </form>
         </div>
         <div id="authMessage" class="message"></div>

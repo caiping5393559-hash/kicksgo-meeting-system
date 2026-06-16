@@ -1103,6 +1103,9 @@ class AppHandler(BaseHTTPRequestHandler):
         if not mention_aliases:
             self.send_json({"ok": False, "error": "注册时必须填写现实姓名、称呼或外号"}, 400)
             return
+        if not business_role_ids:
+            self.send_json({"ok": False, "error": "注册时必须至少选择一个业务角色，提交后只能由管理员修改"}, 400)
+            return
         if any(u.get("username", "").lower() == username.lower() for u in state.get("users", [])):
             self.send_json({"ok": False, "error": "用户名已存在"}, 400)
             return
