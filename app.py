@@ -29,6 +29,7 @@ SESSION_COOKIE = "kg_session"
 SESSION_SECONDS = 60 * 60 * 24 * 7
 SESSION_SECRET = os.environ.get("SESSION_SECRET") or "dev-change-me-kicksgo-weekly-system"
 FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicksgo_meeting")
+AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
 
 
 def now_iso() -> str:
@@ -172,17 +173,17 @@ def default_state() -> dict[str, Any]:
         },
         {
             "id": "person_boss",
-            "real_name": "老板",
-            "chinese_name": "我",
+            "real_name": "蔡平",
+            "chinese_name": "蔡平",
             "english_name": "",
-            "display_name": "我",
+            "display_name": "蔡平",
             "region": "美国/中国",
             "business_area": "整体管理、最终决策",
             "attends_weekly": True,
             "needs_weekly_report": False,
             "has_login": True,
-            "meeting_aliases": ["我", "老板", "Aaron", "iPhone"],
-            "mention_aliases": ["老板", "合伙人", "Boss", "Aaron"],
+            "meeting_aliases": ["蔡平", "我", "老板", "Aaron", "iPhone"],
+            "mention_aliases": ["蔡平", "我", "老板", "合伙人", "Boss", "Aaron"],
         },
         {
             "id": "person_chen",
@@ -316,7 +317,7 @@ def default_state() -> dict[str, Any]:
             },
             {
                 "id": "user_boss",
-                "username": "boss",
+                "username": "蔡平",
                 "password_hash": password_hash(boss_pass),
                 "role": "manager",
                 "status": "active",
@@ -549,6 +550,8 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         "person_tech": ["role_cn_tech"],
     }
     for user in state.get("users", []):
+        if user.get("id") == "user_boss" and str(user.get("username") or "").lower() == "boss":
+            user["username"] = "蔡平"
         user.setdefault("status", "pending")
         user.setdefault("role", "member")
         user.setdefault("person_id", "")
@@ -558,6 +561,13 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
             user["business_role_ids"] = []
         user.setdefault("must_change_password", False)
     for person in state.get("people", []):
+        if person.get("id") == "person_boss":
+            if str(person.get("real_name") or "") in {"", "老板"}:
+                person["real_name"] = "蔡平"
+            if str(person.get("chinese_name") or "") in {"", "我", "老板"}:
+                person["chinese_name"] = "蔡平"
+            if str(person.get("display_name") or "") in {"", "我", "老板"}:
+                person["display_name"] = "蔡平"
         aliases = person.setdefault("meeting_aliases", [])
         if not isinstance(aliases, list):
             person["meeting_aliases"] = []
@@ -620,6 +630,16 @@ def is_admin(user: dict[str, Any]) -> bool:
 
 def is_manager(user: dict[str, Any]) -> bool:
     return user.get("role") in {"admin", "manager"}
+
+
+def user_has_business_role(user: dict[str, Any], role_id: str) -> bool:
+    return role_id in (user.get("business_role_ids") or [])
+
+
+def can_read_transcript_record(user: dict[str, Any], record: dict[str, Any]) -> bool:
+    if is_manager(user):
+        return True
+    return record.get("part") == "part1" and user_has_business_role(user, AGENCY_OPS_ROLE_ID)
 
 
 def audit(state: dict[str, Any], user: dict[str, Any] | None, action: str, detail: dict[str, Any] | None = None) -> None:
@@ -792,6 +812,71 @@ def extract_speakers(content: str, state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_part1_end_marker(line: str) -> bool:
+    compact = normalize_name(line)
+    if not compact:
+        return False
+    has_end = "结束" in compact or "完了" in compact or "完毕" in compact
+    if not has_end:
+        return False
+    return (
+        ("第一部分" in compact and ("凯尔" in compact or "代运营" in compact))
+        or ("凯尔" in compact and ("部分" in compact or "环节" in compact or "这段" in compact or "这个" in compact or "的" in compact))
+        or ("代运营" in compact and ("部分" in compact or "周报" in compact or "环节" in compact or "这段" in compact))
+        or ("part1" in compact and ("凯尔" in compact or "代运营" in compact))
+    )
+
+
+def split_transcript_by_part_marker(content: str) -> tuple[str, str, str]:
+    lines = content.splitlines()
+    before: list[str] = []
+    after: list[str] = []
+    marker = ""
+    found = False
+    for line in lines:
+        if not found and is_part1_end_marker(line):
+            found = True
+            marker = line.strip()
+            continue
+        if found:
+            after.append(line)
+        else:
+            before.append(line)
+    if not found:
+        return content, "", ""
+    return "\n".join(before).strip(), "\n".join(after).strip(), marker
+
+
+def build_transcript_record(
+    state: dict[str, Any],
+    user: dict[str, Any],
+    transcript_id: str,
+    meeting_id: str,
+    part: str,
+    filename: str,
+    content: str,
+    split_marker: str = "",
+) -> dict[str, Any]:
+    analysis = extract_speakers(content, state)
+    return {
+        "id": transcript_id,
+        "meeting_id": meeting_id,
+        "part": part,
+        "title": "第一部分：美国代运营周报" if part == "part1" else "第二部分：内部经营复盘",
+        "original_filename": filename,
+        "char_count": len(content),
+        "line_count": len(content.splitlines()),
+        "content_preview": content[:300],
+        "matched_speakers": analysis["matched_speakers"],
+        "unmatched_speakers": analysis["unmatched_speakers"],
+        "mentioned_people": analysis["mentioned_people"],
+        "mentioned_roles": analysis["mentioned_roles"],
+        "split_marker": split_marker,
+        "uploaded_by": user.get("id"),
+        "uploaded_at": now_iso(),
+    }
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "KicksgoMeetingSystem/1.0"
 
@@ -851,7 +936,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if not record:
                 self.send_json({"ok": False, "error": "Transcript not found"}, 404)
                 return
-            if not is_manager(user):
+            if not can_read_transcript_record(user, record):
                 self.send_json({"ok": False, "error": "No permission"}, 403)
                 return
             self.send_json({"ok": True, "record": record, "content": store.load_transcript_content(transcript_id)})
@@ -981,6 +1066,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 "audit_logs": state.get("audit_logs", [])[-80:] if is_admin(user) else [],
             }
         person_id = user.get("person_id")
+        visible_transcripts = [
+            record for record in state.get("transcript_uploads", [])
+            if can_read_transcript_record(user, record)
+        ]
         return {
             "users": [sanitize_user(user)],
             "people": [p for p in state.get("people", []) if p.get("id") == person_id],
@@ -989,7 +1078,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "meetings": state.get("meetings", []),
             "weekly_reports": [r for r in state.get("weekly_reports", []) if r.get("person_id") == person_id],
             "pre_meeting_notes": [n for n in state.get("pre_meeting_notes", []) if n.get("person_id") == person_id],
-            "transcript_uploads": [],
+            "transcript_uploads": visible_transcripts,
             "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") in {"", person_id}],
             "audit_logs": [],
         }
@@ -1149,29 +1238,40 @@ class AppHandler(BaseHTTPRequestHandler):
         if len(content.strip()) < 10:
             self.send_json({"ok": False, "error": "文字记录内容太短"}, 400)
             return
-        transcript_id = new_id("transcript")
-        analysis = extract_speakers(content, state)
-        record = {
-            "id": transcript_id,
-            "meeting_id": str(payload.get("meeting_id") or ""),
-            "part": str(payload.get("part") or "part1"),
-            "title": str(payload.get("title") or ""),
-            "original_filename": str(payload.get("filename") or ""),
-            "char_count": len(content),
-            "line_count": len(content.splitlines()),
-            "content_preview": content[:300],
-            "matched_speakers": analysis["matched_speakers"],
-            "unmatched_speakers": analysis["unmatched_speakers"],
-            "mentioned_people": analysis["mentioned_people"],
-            "mentioned_roles": analysis["mentioned_roles"],
-            "uploaded_by": user.get("id"),
-            "uploaded_at": now_iso(),
-        }
-        store.save_transcript_content(transcript_id, content)
-        state["transcript_uploads"].append(record)
-        audit(state, user, "upload_transcript", {"meeting_id": record["meeting_id"], "part": record["part"], "id": transcript_id})
+        meeting_id = str(payload.get("meeting_id") or "")
+        filename = str(payload.get("filename") or "")
+        selected_part = str(payload.get("part") or "part1")
+        part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
+        pieces: list[tuple[str, str]] = []
+        if split_marker:
+            if len(part1_content.strip()) >= 10:
+                pieces.append(("part1", part1_content))
+            if len(part2_content.strip()) >= 10:
+                pieces.append(("part2", part2_content))
+        else:
+            pieces.append((selected_part, content))
+        records: list[dict[str, Any]] = []
+        for part, part_content in pieces:
+            transcript_id = new_id("transcript")
+            record = build_transcript_record(
+                state=state,
+                user=user,
+                transcript_id=transcript_id,
+                meeting_id=meeting_id,
+                part=part,
+                filename=filename,
+                content=part_content,
+                split_marker=split_marker,
+            )
+            store.save_transcript_content(transcript_id, part_content)
+            state["transcript_uploads"].append(record)
+            records.append(record)
+        if not records:
+            self.send_json({"ok": False, "error": "自动切分后没有可保存的文字内容"}, 400)
+            return
+        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": record})
+        self.send_json({"ok": True, "record": records[0], "records": records, "split_marker": split_marker})
 
     def handle_save_action(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not is_manager(user):

@@ -42,7 +42,7 @@ data/transcripts/*.txt
 你的普通管理账号：
 
 ```text
-用户名：boss
+用户名：蔡平
 密码：Kicksgo-Boss-2026!
 ```
 

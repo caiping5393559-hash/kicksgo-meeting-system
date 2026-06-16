@@ -569,7 +569,10 @@ function renderTranscripts() {
   const meeting = currentMeeting();
   const records = app.data.transcript_uploads || [];
   const canUpload = ["admin", "manager"].includes(app.user.role);
-  setTitle("会议文字记录", "上传腾讯会议导出的两段文字记录，系统保存到同一周会议档案。");
+  const subtitle = canUpload
+    ? "上传腾讯会议导出的文字记录；如果文字里写到第一部分凯尔/代运营结束，系统会自动拆成两段保存。"
+    : "查看当前账号有权限访问的会议纪要。美国代运营角色只能看到第一部分。";
+  setTitle("会议文字记录", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
@@ -586,30 +589,33 @@ function renderTranscripts() {
           <button type="submit">上传保存</button>
           <span id="transcriptMessage" class="message"></span>
         </div>
+        <p class="hint" style="margin-top:10px">提示：可以上传完整会议文字；出现“第一部分凯尔的结束了”等断点时，会自动把前面保存为 Part 1，后面保存为 Part 2。</p>
       </form>` : ""}
       <div class="panel">
-        <h2>已上传记录</h2>
+        <h2>${canUpload ? "已上传记录" : "可查看会议纪要"}</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>段落</th><th>文件</th><th>字数</th><th>说话人匹配</th><th>未匹配说话人</th><th>提到人员</th><th>提到角色</th><th>时间</th></tr></thead>
+            <thead><tr><th>会议</th><th>段落</th><th>文件</th><th>字数</th><th>说话人匹配</th><th>未匹配说话人</th><th>提到人员</th><th>提到角色</th><th>内容</th><th>时间</th></tr></thead>
             <tbody>
               ${records.map((r) => `
                 <tr>
                   <td>${escapeHtml(meetingName(r.meeting_id))}</td>
-                  <td>${r.part === "part1" ? "Part 1" : "Part 2"}</td>
+                  <td>${r.part === "part1" ? "Part 1：美国代运营" : "Part 2：内部复盘"}</td>
                   <td>${escapeHtml(r.original_filename || r.title || "-")}</td>
                   <td>${escapeHtml(r.char_count)}</td>
                   <td>${(r.matched_speakers || []).map((s) => escapeHtml(`${s.speaker}→${s.person_name}`)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.unmatched_speakers || []).map((s) => escapeHtml(s.speaker)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.mentioned_people || []).slice(0, 8).map((p) => escapeHtml(`${p.person_name}（${p.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.mentioned_roles || []).slice(0, 8).map((role) => escapeHtml(`${role.role_name}（${role.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
+                  <td><button class="plain-btn view-transcript" data-id="${escapeHtml(r.id)}">查看</button></td>
                   <td>${escapeHtml(r.uploaded_at || "")}</td>
                 </tr>
-              `).join("") || '<tr><td colspan="9" class="muted">暂无上传记录</td></tr>'}
+              `).join("") || '<tr><td colspan="10" class="muted">暂无可查看记录</td></tr>'}
             </tbody>
           </table>
         </div>
       </div>
+      <div id="transcriptViewer" class="panel transcript-viewer hidden"></div>
     </div>
   `;
   qs("#transcriptFile")?.addEventListener("change", async (event) => {
@@ -619,6 +625,9 @@ function renderTranscripts() {
     qs('#transcriptForm textarea[name="content"]').value = await file.text();
   });
   qs("#transcriptForm")?.addEventListener("submit", saveTranscript);
+  document.querySelectorAll(".view-transcript").forEach((btn) => {
+    btn.addEventListener("click", () => viewTranscript(btn.dataset.id));
+  });
 }
 
 async function saveTranscript(event) {
@@ -630,6 +639,32 @@ async function saveTranscript(event) {
     renderTranscripts();
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
+  }
+}
+
+async function viewTranscript(id) {
+  const viewer = qs("#transcriptViewer");
+  if (!viewer) return;
+  viewer.classList.remove("hidden");
+  viewer.innerHTML = `<h2>正在读取会议纪要...</h2>`;
+  try {
+    const res = await api(`/api/transcripts/${encodeURIComponent(id)}`);
+    const record = res.record || {};
+    const partLabel = record.part === "part1" ? "Part 1：美国代运营周报" : "Part 2：内部经营复盘";
+    viewer.innerHTML = `
+      <div class="section-title">
+        <div>
+          <h2>${escapeHtml(partLabel)}</h2>
+          <p class="muted">${escapeHtml(meetingName(record.meeting_id))} · ${escapeHtml(record.original_filename || record.title || "")}</p>
+        </div>
+        <span class="tag">${escapeHtml(record.char_count || 0)} 字</span>
+      </div>
+      ${record.split_marker ? `<p class="hint">自动断点：${escapeHtml(record.split_marker)}</p>` : ""}
+      <pre class="transcript-content">${escapeHtml(res.content || "")}</pre>
+    `;
+    viewer.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    viewer.innerHTML = `<h2>无法查看</h2><p class="message error">${escapeHtml(err.message)}</p>`;
   }
 }
 

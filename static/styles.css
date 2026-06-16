@@ -520,6 +520,25 @@ tr:last-child td {
   border: 1px solid var(--line);
 }
 
+.transcript-viewer {
+  scroll-margin-top: 16px;
+}
+
+.transcript-content {
+  max-height: 560px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  color: var(--text);
+  padding: 14px;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .success {
   color: var(--green);
 }
