@@ -629,6 +629,24 @@ tr:last-child td {
   margin-bottom: 6px;
 }
 
+.notice-box {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #ebd4a2;
+  border-radius: 8px;
+  background: #fff7e5;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.notice-box strong {
+  color: var(--navy);
+  font-size: 13px;
+}
+
 .multi-select {
   min-width: 180px;
   min-height: 106px;

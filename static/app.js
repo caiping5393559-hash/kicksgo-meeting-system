@@ -794,7 +794,7 @@ function renderAdmin() {
       <span>现实称呼：${escapeHtml((person.mention_aliases || []).join(", ") || "-")}</span>
       <button type="button" class="plain-btn compact-action edit-person" data-id="${person.id}">编辑人员</button>
     </div>
-  ` : '<span class="muted">未绑定人员</span>';
+  ` : '<span class="muted">未绑定人员，待管理员确认</span>';
   const userCheckboxes = (roleId) => checkboxOptions(
     users.map((u) => ({
       id: u.id,
@@ -806,9 +806,29 @@ function renderAdmin() {
   );
   qs("#content").innerHTML = `
     <div class="grid">
+      <form id="createUserForm" class="panel">
+        <h2>管理员创建账号</h2>
+        <p class="hint">这里给管理员提前建账号使用；成员自己注册时，用户名建议直接用中文名或平时称呼，业务角色按实际负责内容多选，不确定就选最接近的，管理员后续可以统一调整。</p>
+        <div class="form-grid">
+          <label>用户名<input name="username" required placeholder="例如：凯尔、老陈、诺诺" /></label>
+          <label>临时密码<input name="password" placeholder="不填则自动生成" /></label>
+          <label>系统权限<select name="role"><option>member</option><option>manager</option><option>admin</option></select></label>
+          <label>状态<select name="status"><option selected>active</option><option>pending</option><option>disabled</option></select></label>
+          <label>绑定人员<select name="person_id"><option value="">先不绑定，等注册后再确认</option>${people.map((p) => `<option value="${p.id}">${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>
+          <div class="alias-label field-wide"><span>业务角色</span><div class="checkbox-grid role-checkboxes">${roleCheckboxes([])}</div></div>
+        </div>
+        <div class="split-actions" style="margin-top:12px"><button type="submit">创建账号</button><span id="createUserMessage" class="message"></span></div>
+      </form>
+
       <div class="panel">
         <h2>账号权限 / 人员绑定</h2>
-        <p class="hint">账号权限、绑定人员和人员资料集中在这里管理；没有账号的人员也在本模块底部维护。</p>
+        <p class="hint">账号权限、绑定现实人员、人员资料和业务角色集中在这里管理。用户第一次注册后不能自己改业务角色，只能由管理员后台调整。</p>
+        ${unboundPeople.length ? `
+          <div class="notice-box">
+            <strong>未绑定人员提醒</strong>
+            <span>当前有 ${unboundPeople.length} 条人员资料还没有绑定账号。这些只是根据现有会议称呼和示例预留的名称匹配资料，不代表最终注册用户名或角色。真实成员注册时按自己的中文名、腾讯会议名和实际职责填写，管理员再在这里确认绑定。</span>
+          </div>
+        ` : ""}
         <div class="table-wrap">
           <table>
             <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>人员资料</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
@@ -832,44 +852,8 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${unboundPeople.length ? `
-          <div class="subsection">
-            <h3>未绑定账号人员</h3>
-            <p class="hint">这些人员目前没有登录账号，但仍会用于会议文字匹配和人员称呼识别。</p>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>姓名</th><th>地区</th><th>负责业务</th><th>腾讯会议名</th><th>现实称呼/外号</th><th>操作</th></tr></thead>
-                <tbody>
-                  ${unboundPeople.map((p) => `
-                    <tr>
-                      <td>${escapeHtml(p.display_name || p.real_name)}</td>
-                      <td>${escapeHtml(p.region || "")}</td>
-                      <td>${escapeHtml(p.business_area || "")}</td>
-                      <td>${escapeHtml((p.meeting_aliases || []).join(", "))}</td>
-                      <td>${escapeHtml((p.mention_aliases || []).join(", "))}</td>
-                      <td><button type="button" class="plain-btn edit-person" data-id="${p.id}">编辑人员</button></td>
-                    </tr>
-                  `).join("")}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ` : ""}
         <div id="adminUserMessage" class="message"></div>
       </div>
-
-      <form id="createUserForm" class="panel">
-        <h2>管理员创建账号</h2>
-        <div class="form-grid">
-          <label>用户名<input name="username" required /></label>
-          <label>临时密码<input name="password" placeholder="不填则自动生成" /></label>
-          <label>系统权限<select name="role"><option>member</option><option>manager</option><option>admin</option></select></label>
-          <label>状态<select name="status"><option selected>active</option><option>pending</option><option>disabled</option></select></label>
-          <label>绑定人员<select name="person_id"><option value="">先不绑定</option>${people.map((p) => `<option value="${p.id}">${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>
-          <div class="alias-label field-wide"><span>业务角色</span><div class="checkbox-grid role-checkboxes">${roleCheckboxes([])}</div></div>
-        </div>
-        <div class="split-actions" style="margin-top:12px"><button type="submit">创建账号</button><span id="createUserMessage" class="message"></span></div>
-      </form>
 
       <div class="panel">
         <h2>业务角色职责 / 账号绑定</h2>
