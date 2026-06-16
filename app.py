@@ -1132,40 +1132,55 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         person_id = new_id("person")
         user_id = new_id("user")
-        state["people"].append(
-            {
-                "id": person_id,
-                "real_name": display_name,
-                "chinese_name": display_name,
-                "english_name": "",
-                "display_name": display_name,
-                "region": "",
-                "business_area": "",
-                "attends_weekly": True,
-                "needs_weekly_report": False,
-                "has_login": True,
-                "meeting_aliases": meeting_aliases,
-                "mention_aliases": mention_aliases,
-                "manual_aliases": True,
-            }
-        )
-        state["users"].append(
-            {
-                "id": user_id,
-                "username": username,
-                "password_hash": password_hash(password),
-                "role": "member",
-                "status": "pending",
-                "person_id": person_id,
-                "business_role_ids": business_role_ids,
-                "created_at": now_iso(),
-                "last_login_at": "",
-                "must_change_password": False,
-            }
-        )
+        person = {
+            "id": person_id,
+            "real_name": display_name,
+            "chinese_name": display_name,
+            "english_name": "",
+            "display_name": display_name,
+            "region": "",
+            "business_area": "",
+            "attends_weekly": True,
+            "needs_weekly_report": False,
+            "has_login": True,
+            "meeting_aliases": meeting_aliases,
+            "mention_aliases": mention_aliases,
+            "manual_aliases": True,
+        }
+        new_user = {
+            "id": user_id,
+            "username": username,
+            "password_hash": password_hash(password),
+            "role": "member",
+            "status": "active",
+            "person_id": person_id,
+            "business_role_ids": business_role_ids,
+            "created_at": now_iso(),
+            "last_login_at": now_iso(),
+            "must_change_password": True,
+        }
+        state["people"].append(person)
+        state["users"].append(new_user)
         audit(state, None, "register", {"username": username, "person_id": person_id})
         store.save(state, "register")
-        self.send_json({"ok": True, "message": "注册已提交，等待管理员审核。"})
+        token = sign_session(user_id)
+        body = json.dumps(
+            {
+                "ok": True,
+                "message": "注册成功，已自动登录。",
+                "user": sanitize_user(new_user),
+                "person": person,
+                "data": self.scoped_state(state, new_user),
+                "storage": store.status(),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.set_cookie(token)
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_login(self, payload: dict[str, Any]) -> None:
         state = store.load()

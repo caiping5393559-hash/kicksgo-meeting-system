@@ -80,6 +80,11 @@ function qs(selector) {
   return document.querySelector(selector);
 }
 
+function scrollToPageTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  qs(".main")?.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -286,6 +291,7 @@ function renderAuth() {
   setRegisterVisible(false);
   initAliasEditors(qs("#authView"));
   renderRegisterBusinessRoles();
+  scrollToPageTop();
 }
 
 function setRegisterVisible(visible) {
@@ -378,6 +384,7 @@ async function loadMe() {
   }
   await refresh();
   renderAppShell();
+  scrollToPageTop();
 }
 
 function renderDashboard() {
@@ -1304,6 +1311,7 @@ document.addEventListener("click", (event) => {
   if (nav) {
     app.page = nav.dataset.page;
     renderPage();
+    scrollToPageTop();
   }
 });
 
@@ -1337,6 +1345,7 @@ qs("#loginForm").addEventListener("submit", async (event) => {
       await refresh();
     }
     renderAppShell();
+    scrollToPageTop();
   } catch (err) {
     showMessage("#authMessage", err.message);
   } finally {
@@ -1361,7 +1370,13 @@ qs("#hideRegisterBtn")?.addEventListener("click", () => {
 
 qs("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const originalText = button?.textContent || "提交注册";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "注册中...";
+    }
     collectPendingAliasInputs(event.currentTarget);
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     body.business_role_ids = checkedValues(event.currentTarget, "business_role_ids");
@@ -1370,13 +1385,27 @@ qs("#registerForm").addEventListener("submit", async (event) => {
       return;
     }
     const res = await api("/api/register", { method: "POST", body });
+    if (res.user) {
+      app.user = res.user;
+      app.person = res.person;
+      app.data = res.data;
+      app.storage = res.storage;
+      app.page = "dashboard";
+      event.currentTarget.reset();
+      setAliasEditorValues(event.currentTarget, "mention_aliases", []);
+      setRegisterVisible(false);
+      renderAppShell();
+      scrollToPageTop();
+      return;
+    }
     showMessage("#authMessage", res.message || "注册已提交", true);
-    event.currentTarget.reset();
-    setAliasEditorValues(event.currentTarget, "mention_aliases", []);
-    renderRegisterBusinessRoles();
-    setRegisterVisible(false);
   } catch (err) {
     showMessage("#authMessage", err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 });
 
@@ -1389,6 +1418,7 @@ qs("#logoutBtn").addEventListener("click", async () => {
     app.data = null;
     app.page = "dashboard";
     renderAuth();
+    scrollToPageTop();
   }
 });
 
