@@ -390,22 +390,6 @@ p {
   margin-bottom: 10px;
 }
 
-.inline-form-panel {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-2);
-}
-
-.inline-form-panel h3 {
-  margin-bottom: 0;
-  color: var(--navy);
-  font-size: 15px;
-}
-
 .section-title {
   display: flex;
   align-items: center;
@@ -444,6 +428,13 @@ p {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.table-footer-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
 }
 
 table {
