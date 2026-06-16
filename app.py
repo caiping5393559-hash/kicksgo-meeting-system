@@ -1166,10 +1166,17 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "账号还未通过审核或已停用"}, 403)
             return
         user["last_login_at"] = now_iso()
-        audit(state, user, "login")
-        store.save(state, "login")
         token = sign_session(user["id"])
-        body = json.dumps({"ok": True, "user": sanitize_user(user), "person": get_user_person(state, user)}, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(
+            {
+                "ok": True,
+                "user": sanitize_user(user),
+                "person": get_user_person(state, user),
+                "data": self.scoped_state(state, user),
+                "storage": store.status(),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

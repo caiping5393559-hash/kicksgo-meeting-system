@@ -1305,15 +1305,31 @@ document.addEventListener("keydown", (event) => {
 
 qs("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const originalText = button?.textContent || "登录";
   try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "登录中...";
+    }
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     const res = await api("/api/login", { method: "POST", body });
     app.user = res.user;
     app.person = res.person;
-    await refresh();
+    if (res.data) {
+      app.data = res.data;
+      app.storage = res.storage;
+    } else {
+      await refresh();
+    }
     renderAppShell();
   } catch (err) {
     showMessage("#authMessage", err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 });
 
