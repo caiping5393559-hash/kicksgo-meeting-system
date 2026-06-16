@@ -578,21 +578,22 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         mention_aliases = person.setdefault("mention_aliases", [])
         if not isinstance(mention_aliases, list):
             person["mention_aliases"] = []
-        default_person = next((p for p in defaults.get("people", []) if p.get("id") == person.get("id")), None)
-        if default_person:
-            for field in ["meeting_aliases", "mention_aliases"]:
-                for value in default_person.get(field, []) or []:
-                    if value and value not in person[field]:
-                        person[field].append(value)
-        for value in [
-            person.get("real_name"),
-            person.get("chinese_name"),
-            person.get("english_name"),
-            person.get("display_name"),
-        ]:
-            value = str(value or "").strip()
-            if value and value not in person["mention_aliases"]:
-                person["mention_aliases"].append(value)
+        if not person.get("manual_aliases"):
+            default_person = next((p for p in defaults.get("people", []) if p.get("id") == person.get("id")), None)
+            if default_person:
+                for field in ["meeting_aliases", "mention_aliases"]:
+                    for value in default_person.get(field, []) or []:
+                        if value and value not in person[field]:
+                            person[field].append(value)
+            for value in [
+                person.get("real_name"),
+                person.get("chinese_name"),
+                person.get("english_name"),
+                person.get("display_name"),
+            ]:
+                value = str(value or "").strip()
+                if value and value not in person["mention_aliases"]:
+                    person["mention_aliases"].append(value)
     return state
 
 
@@ -1131,6 +1132,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "has_login": True,
                 "meeting_aliases": meeting_aliases,
                 "mention_aliases": mention_aliases,
+                "manual_aliases": True,
             }
         )
         state["users"].append(
@@ -1418,8 +1420,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 "attends_weekly": bool(payload.get("attends_weekly")),
                 "needs_weekly_report": bool(payload.get("needs_weekly_report")),
                 "has_login": bool(payload.get("has_login")),
-                "meeting_aliases": payload.get("meeting_aliases") or [],
-                "mention_aliases": payload.get("mention_aliases") or [],
+                "meeting_aliases": split_aliases(payload.get("meeting_aliases")),
+                "mention_aliases": split_aliases(payload.get("mention_aliases")),
+                "manual_aliases": True,
             }
             if existing:
                 existing.update(data)
