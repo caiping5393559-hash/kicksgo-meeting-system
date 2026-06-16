@@ -801,6 +801,20 @@ class AppHandler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self.send_json({"ok": True, "storage": store.status(), "time": now_iso()})
             return
+        if path == "/api/public-config":
+            state = store.load()
+            roles = [
+                {
+                    "id": role.get("id"),
+                    "name": role.get("name"),
+                    "category": role.get("category"),
+                    "description": role.get("description"),
+                    "aliases": role.get("aliases", []),
+                }
+                for role in state.get("business_roles", [])
+            ]
+            self.send_json({"ok": True, "business_roles": roles})
+            return
         if path == "/api/me":
             state = store.load()
             user = self.current_user(state)
@@ -970,6 +984,7 @@ class AppHandler(BaseHTTPRequestHandler):
         display_name = str(payload.get("display_name") or username).strip()
         meeting_aliases = split_aliases(payload.get("meeting_aliases"))
         mention_aliases = split_aliases(payload.get("mention_aliases"))
+        business_role_ids = clean_business_role_ids(state, payload.get("business_role_ids"))
         if not re.match(r"^[A-Za-z0-9_.@-]{3,40}$", username):
             self.send_json({"ok": False, "error": "用户名至少3位，只能包含字母、数字、点、下划线、横线或@"}, 400)
             return
@@ -1011,7 +1026,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "role": "member",
                 "status": "pending",
                 "person_id": person_id,
-                "business_role_ids": [],
+                "business_role_ids": business_role_ids,
                 "created_at": now_iso(),
                 "last_login_at": "",
                 "must_change_password": False,

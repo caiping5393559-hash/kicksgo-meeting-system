@@ -31,9 +31,10 @@
             <label>系统显示名<input name="display_name" required placeholder="例如：凯尔 / Ken / 深圳财务-小王" /></label>
             <label>腾讯会议参会人名<textarea name="meeting_aliases" required placeholder="必须填写。多个名称用逗号或换行分隔，例如：Kyle, KYLE, 凯尔"></textarea></label>
             <label>现实姓名 / 称呼 / 外号<textarea name="mention_aliases" required placeholder="必须填写。多个称呼用逗号或换行分隔，例如：老陈, 陈总, Kyle, 凯尔"></textarea></label>
+            <label>业务角色<select id="registerBusinessRoles" name="business_role_ids" class="multi-select" multiple size="8"><option disabled>正在加载业务角色...</option></select></label>
             <label>密码<input name="password" type="password" autocomplete="new-password" required /></label>
             <button type="submit">提交注册</button>
-            <div class="hint">注册后需要管理员审核。管理员可以修改名称匹配和业务角色。</div>
+            <div class="hint">业务角色可以多选。注册后需要管理员审核，管理员可以继续修改名称匹配和业务角色。</div>
           </form>
         </div>
         <div id="authMessage" class="message"></div>

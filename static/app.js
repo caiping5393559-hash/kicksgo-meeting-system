@@ -2,6 +2,7 @@ const app = {
   user: null,
   person: null,
   data: null,
+  publicRoles: [],
   storage: null,
   page: "dashboard",
 };
@@ -154,6 +155,30 @@ function showMessage(target, text, ok = false) {
 function renderAuth() {
   qs("#authView").classList.remove("hidden");
   qs("#appView").classList.add("hidden");
+  renderRegisterBusinessRoles();
+}
+
+function renderRegisterBusinessRoles() {
+  const select = qs("#registerBusinessRoles");
+  if (!select) return;
+  if (!app.publicRoles.length) {
+    select.innerHTML = `<option disabled>正在加载业务角色...</option>`;
+    return;
+  }
+  select.innerHTML = app.publicRoles
+    .map((role) => `<option value="${escapeHtml(role.id)}">${escapeHtml(role.name)}${role.category ? ` / ${escapeHtml(role.category)}` : ""}</option>`)
+    .join("");
+}
+
+async function loadPublicConfig() {
+  try {
+    const res = await api("/api/public-config");
+    app.publicRoles = res.business_roles || [];
+    renderRegisterBusinessRoles();
+  } catch (err) {
+    const select = qs("#registerBusinessRoles");
+    if (select) select.innerHTML = `<option disabled>业务角色加载失败，请刷新页面</option>`;
+  }
 }
 
 function renderAppShell() {
@@ -996,9 +1021,11 @@ qs("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+    body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
     const res = await api("/api/register", { method: "POST", body });
     showMessage("#authMessage", res.message || "注册已提交", true);
     event.currentTarget.reset();
+    renderRegisterBusinessRoles();
   } catch (err) {
     showMessage("#authMessage", err.message);
   }
@@ -1023,4 +1050,5 @@ qs("#changePasswordForm").addEventListener("submit", async (event) => {
   }
 });
 
+loadPublicConfig();
 loadMe().catch(() => renderAuth());
