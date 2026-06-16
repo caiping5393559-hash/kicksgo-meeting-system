@@ -139,6 +139,34 @@ function userDisplayName(user) {
   return personName(user?.person_id) || user?.username || "";
 }
 
+function registeredPersonOptions(selectedId = "", emptyText = "待定") {
+  const users = app.data?.users || [];
+  const peopleById = new Map((app.data?.people || []).map((p) => [p.id, p]));
+  const seenPersonIds = new Set();
+  const options = [];
+  users.forEach((user) => {
+    if (user.status === "disabled" || !user.person_id || seenPersonIds.has(user.person_id)) return;
+    const person = peopleById.get(user.person_id);
+    if (!person) return;
+    seenPersonIds.add(user.person_id);
+    const personLabel = person.display_name || person.real_name || person.chinese_name || person.id;
+    const label = user.username && user.username !== personLabel ? `${user.username} / ${personLabel}` : personLabel;
+    options.push(`<option value="${escapeHtml(person.id)}" ${person.id === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`);
+  });
+  if (selectedId && !seenPersonIds.has(selectedId)) {
+    options.push(`<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(personName(selectedId) || selectedId)}（未绑定注册账号）</option>`);
+  }
+  return `<option value="">${escapeHtml(emptyText)}</option>${options.join("")}`;
+}
+
+function ensurePersonSelectValue(select, personId) {
+  if (!select || !personId || Array.from(select.options).some((option) => option.value === personId)) return;
+  const option = document.createElement("option");
+  option.value = personId;
+  option.textContent = `${personName(personId) || personId}（未绑定注册账号）`;
+  select.appendChild(option);
+}
+
 function selectedValues(select) {
   return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
 }
@@ -548,15 +576,30 @@ function renderMeetings() {
 function renderReport() {
   const meeting = currentMeeting();
   const people = app.data.people || [];
-  const agencyPersonIds = (app.data.users || [])
-    .filter((u) => (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID))
-    .map((u) => u.person_id)
-    .filter(Boolean);
-  const fallbackKyle = people.find((p) => p.id === "person_kyle") || people[0] || {};
+  const users = app.data.users || [];
+  const peopleById = new Map(people.map((p) => [p.id, p]));
+  const agencyUsers = users.filter((u) => (
+    u.status !== "disabled" &&
+    u.person_id &&
+    (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID)
+  ));
+  const agencyPersonIds = agencyUsers.map((u) => u.person_id).filter(Boolean);
+  const reportPeople = [];
+  const seenReportPersonIds = new Set();
+  agencyUsers.forEach((user) => {
+    const person = peopleById.get(user.person_id);
+    if (!person || seenReportPersonIds.has(person.id)) return;
+    seenReportPersonIds.add(person.id);
+    reportPeople.push({ person, user });
+  });
+  const reportPersonIds = new Set(reportPeople.map((item) => item.person.id));
   const canEditReport = canViewAgencyReport();
   const canChoose = ["admin", "manager"].includes(app.user.role);
-  const defaultPersonId = agencyPersonIds[0] || fallbackKyle.id || app.user.person_id;
-  const selectedPerson = canChoose ? (sessionStorage.getItem("reportPersonId") || defaultPersonId) : (canEditReport ? app.user.person_id : defaultPersonId);
+  const defaultPersonId = agencyPersonIds[0] || "";
+  const storedPersonId = sessionStorage.getItem("reportPersonId") || "";
+  const selectedPerson = canChoose
+    ? (reportPersonIds.has(storedPersonId) ? storedPersonId : defaultPersonId)
+    : (canEditReport ? app.user.person_id : defaultPersonId);
   const report = (app.data.weekly_reports || []).find((r) => r.meeting_id === meeting?.id && r.person_id === selectedPerson) || { fields: {} };
   const fields = report.fields || {};
   setTitle("美国代运营周报", canEditReport ? "美国代运营角色会前填写直营店周报；其他人可查看完成后的内容。" : "查看美国代运营完成后的第一部分周报内容。");
@@ -565,7 +608,11 @@ function renderReport() {
       <div class="panel">
         <div class="toolbar">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
-          ${canChoose ? `<label>填写对象<select name="person_id">${people.map((p) => `<option value="${p.id}" ${p.id === selectedPerson ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>` : ""}
+          ${canChoose ? `<label>填写对象<select name="person_id">${reportPeople.length ? reportPeople.map(({ person, user }) => {
+            const personLabel = person.display_name || person.real_name || person.chinese_name || person.id;
+            const label = user?.username && user.username !== personLabel ? `${personLabel} / ${user.username}` : personLabel;
+            return `<option value="${person.id}" ${person.id === selectedPerson ? "selected" : ""}>${escapeHtml(label)}</option>`;
+          }).join("") : '<option value="">暂无已绑定美国代运营</option>'}</select></label>` : ""}
           ${canEditReport ? '<button type="submit">保存周报</button>' : '<span class="tag">只读查看</span>'}
           <span id="reportMessage" class="message"></span>
         </div>
@@ -641,7 +688,6 @@ async function saveReport(event) {
 
 function renderNotes() {
   const meeting = currentMeeting();
-  const people = app.data.people || [];
   const canManage = ["admin", "manager"].includes(app.user.role);
   const notes = app.data.pre_meeting_notes || [];
   setTitle("会前备注", "每个人周会前写下本周要提出的问题、需要谁配合、建议怎么处理。");
@@ -652,7 +698,7 @@ function renderNotes() {
         <input type="hidden" name="id" />
         <div class="form-grid">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
-          ${canManage ? `<label>填写人<select name="person_id">${people.map((p) => `<option value="${p.id}" ${p.id === app.user.person_id ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>` : ""}
+          ${canManage ? `<label>填写人<select name="person_id">${registeredPersonOptions(app.user.person_id, "请选择注册用户")}</select></label>` : ""}
           <label>会议部分<select name="meeting_part"><option value="part1">第一部分：美国代运营周报</option><option value="part2" selected>第二部分：内部复盘</option></select></label>
           <label>模块<select name="module"><option>货品</option><option>仓库</option><option>物流</option><option>直播</option><option>达人</option><option>技术</option><option>合作方</option><option>财务</option><option>其他</option></select></label>
           <label>优先级<select name="priority"><option>高</option><option selected>中</option><option>低</option></select></label>
@@ -700,6 +746,7 @@ function fillNote(id) {
   const note = (app.data.pre_meeting_notes || []).find((n) => n.id === id);
   if (!note) return;
   const form = qs("#noteForm");
+  ensurePersonSelectValue(form.elements.person_id, note.person_id);
   for (const [key, value] of Object.entries(note)) {
     if (form.elements[key]) form.elements[key].value = typeof value === "boolean" ? String(value) : value;
   }
@@ -836,7 +883,6 @@ async function viewTranscript(id) {
 
 function renderActions() {
   const meeting = currentMeeting();
-  const people = app.data.people || [];
   const actions = app.data.action_items || [];
   const canEdit = ["admin", "manager"].includes(app.user.role);
   setTitle("行动项", "每次会议最后必须收口：事项、负责人、截止日期、状态。");
@@ -849,7 +895,7 @@ function renderActions() {
         <div class="form-grid">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
           <label>段落<select name="part"><option value="part1">第一部分</option><option value="part2" selected>第二部分</option></select></label>
-          <label>负责人<select name="owner_person_id"><option value="">待定</option>${people.map((p) => `<option value="${p.id}">${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>
+          <label>负责人<select name="owner_person_id">${registeredPersonOptions("", "待定")}</select></label>
           <label class="field-wide">事项<input name="title" required /></label>
           <label>截止日期<input name="due_date" type="date" /></label>
           <label>优先级<select name="priority"><option>P0-今天处理</option><option selected>P1-本周必须</option><option>P2-观察</option><option>P3-低优先</option></select></label>
@@ -895,6 +941,7 @@ function fillAction(id) {
   const action = (app.data.action_items || []).find((a) => a.id === id);
   if (!action) return;
   const form = qs("#actionForm");
+  ensurePersonSelectValue(form.elements.owner_person_id, action.owner_person_id);
   for (const [key, value] of Object.entries(action)) {
     if (form.elements[key]) form.elements[key].value = value || "";
   }
