@@ -7,9 +7,11 @@ const app = {
   page: "dashboard",
 };
 
+const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
+
 const pages = [
   ["dashboard", "周会首页"],
-  ["report", "凯尔周报"],
+  ["report", "美国代运营周报"],
   ["notes", "会前备注"],
   ["transcripts", "会议文字记录"],
   ["actions", "行动项"],
@@ -18,7 +20,7 @@ const pages = [
 
 const part2Agenda = [
   ["5分钟", "回顾上周会议纪要", "主持人", "上周行动项、负责人、完成情况、未完成原因。"],
-  ["8分钟", "凯尔直营店内部评估", "你/老陈", "第一部分信息转成内部判断：人、货、流量、内容、价格、仓库。"],
+  ["8分钟", "美国代运营内部评估", "你/老陈", "第一部分信息转成内部判断：人、货、流量、内容、价格、仓库。"],
   ["8分钟", "国内货品与采购", "国内采购/运营", "爆款SKU、缺货SKU、补货进度、价格优势、下周直播支持。"],
   ["8分钟", "美国仓库与履约", "美国仓库", "24h发货率、延迟、错发漏发、退件丢件、是否支持爆单。"],
   ["5分钟", "其他TikTok店铺与合作方", "Ken/诺诺", "自营其他店、合作方店铺、继续供货或暂停建议。"],
@@ -113,6 +115,14 @@ function businessRoleName(id) {
 function userBusinessRoleNames(user) {
   const names = (user?.business_role_ids || []).map(businessRoleName).filter(Boolean);
   return names.length ? names.join("、") : "未分配";
+}
+
+function hasBusinessRole(roleId, user = app.user) {
+  return (user?.business_role_ids || []).includes(roleId);
+}
+
+function canViewAgencyReport() {
+  return hasBusinessRole(AGENCY_OPS_ROLE_ID);
 }
 
 function userDisplayName(user) {
@@ -257,7 +267,12 @@ async function loadPublicConfig() {
 function renderAppShell() {
   qs("#authView").classList.add("hidden");
   qs("#appView").classList.remove("hidden");
-  const visiblePages = pages.filter(([key]) => key !== "admin" || app.user?.role === "admin");
+  if (app.page === "report" && !canViewAgencyReport()) app.page = "dashboard";
+  const visiblePages = pages.filter(([key]) => {
+    if (key === "admin") return app.user?.role === "admin";
+    if (key === "report") return canViewAgencyReport();
+    return true;
+  });
   qs("#nav").innerHTML = visiblePages
     .map(([key, label]) => `<button class="nav-btn ${app.page === key ? "active" : ""}" data-page="${key}">${label}</button>`)
     .join("");
@@ -270,6 +285,7 @@ function renderAppShell() {
 function renderPage() {
   const title = pages.find(([key]) => key === app.page)?.[1] || "周会首页";
   setTitle(title, "");
+  if (app.page === "report" && !canViewAgencyReport()) app.page = "dashboard";
   if (app.page === "dashboard") renderDashboard();
   if (app.page === "report") renderReport();
   if (app.page === "notes") renderNotes();
@@ -311,11 +327,16 @@ function renderDashboard() {
   const transcripts = app.data.transcript_uploads || [];
   const actions = app.data.action_items || [];
   const notes = app.data.pre_meeting_notes || [];
-  const kyle = (app.data.people || []).find((p) => p.id === "person_kyle") || {};
-  const report = reports.find((r) => r.meeting_id === meeting?.id && r.person_id === kyle.id);
+  const agencyPersonIds = (app.data.users || [])
+    .filter((u) => (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID))
+    .map((u) => u.person_id)
+    .filter(Boolean);
+  const fallbackKyle = (app.data.people || []).find((p) => p.id === "person_kyle") || {};
+  const reportPersonIds = agencyPersonIds.length ? agencyPersonIds : [fallbackKyle.id].filter(Boolean);
+  const report = reports.find((r) => r.meeting_id === meeting?.id && reportPersonIds.includes(r.person_id));
   const part1Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part1");
   const part2Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part2");
-  setTitle("周会首页", "下次会议、两段腾讯会议链接、凯尔周报状态、文字记录上传状态和第二部分流程。");
+  setTitle("周会首页", "下次会议、两段腾讯会议链接、美国代运营周报状态、文字记录上传状态和第二部分流程。");
   qs("#content").innerHTML = `
     <div class="grid">
       <div class="panel">
@@ -327,7 +348,7 @@ function renderDashboard() {
           <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
         </div>
         <div class="metric-row">
-          <div class="metric"><span>凯尔周报</span><strong>${report ? "已保存" : meeting?.kyle_report_required ? "待填写" : "不强制"}</strong></div>
+          <div class="metric"><span>美国代运营周报</span><strong>${report ? "已保存" : meeting?.kyle_report_required ? "待填写" : "不强制"}</strong></div>
           <div class="metric"><span>第1段文字记录</span><strong>${part1Uploaded ? "已上传" : "待上传"}</strong></div>
           <div class="metric"><span>第2段文字记录</span><strong>${part2Uploaded ? "已上传" : "待上传"}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
@@ -382,12 +403,17 @@ function renderDashboard() {
 function renderReport() {
   const meeting = currentMeeting();
   const people = app.data.people || [];
-  const kyle = people.find((p) => p.id === "person_kyle") || people[0] || {};
+  const agencyPersonIds = (app.data.users || [])
+    .filter((u) => (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID))
+    .map((u) => u.person_id)
+    .filter(Boolean);
+  const fallbackKyle = people.find((p) => p.id === "person_kyle") || people[0] || {};
   const canChoose = ["admin", "manager"].includes(app.user.role);
-  const selectedPerson = canChoose ? (sessionStorage.getItem("reportPersonId") || kyle.id) : app.user.person_id;
+  const defaultPersonId = app.user.person_id || agencyPersonIds[0] || fallbackKyle.id;
+  const selectedPerson = canChoose ? (sessionStorage.getItem("reportPersonId") || defaultPersonId) : app.user.person_id;
   const report = (app.data.weekly_reports || []).find((r) => r.meeting_id === meeting?.id && r.person_id === selectedPerson) || { fields: {} };
   const fields = report.fields || {};
-  setTitle("凯尔周报", "从2026-06-22中国时间这次周会开始，凯尔会前填写直营店周报。");
+  setTitle("美国代运营周报", "从2026-06-22中国时间这次周会开始，美国代运营会前填写直营店周报。");
   qs("#content").innerHTML = `
     <form id="reportForm" class="grid">
       <div class="panel">
@@ -471,7 +497,7 @@ function renderNotes() {
         <div class="form-grid">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
           ${canManage ? `<label>填写人<select name="person_id">${people.map((p) => `<option value="${p.id}" ${p.id === app.user.person_id ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>` : ""}
-          <label>会议部分<select name="meeting_part"><option value="part1">第一部分：凯尔直营店</option><option value="part2" selected>第二部分：内部复盘</option></select></label>
+          <label>会议部分<select name="meeting_part"><option value="part1">第一部分：美国代运营周报</option><option value="part2" selected>第二部分：内部复盘</option></select></label>
           <label>模块<select name="module"><option>货品</option><option>仓库</option><option>物流</option><option>直播</option><option>达人</option><option>技术</option><option>合作方</option><option>财务</option><option>其他</option></select></label>
           <label>优先级<select name="priority"><option>高</option><option selected>中</option><option>低</option></select></label>
           <label>需要会议决策<select name="needs_decision"><option value="false">否</option><option value="true">是</option></select></label>
@@ -551,7 +577,7 @@ function renderTranscripts() {
         <h2>上传腾讯会议文字记录</h2>
         <div class="form-grid two">
           <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
-          <label>会议段落<select name="part"><option value="part1">Part 1：凯尔直营店周报</option><option value="part2">Part 2：内部经营复盘</option></select></label>
+          <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营周报</option><option value="part2">Part 2：内部经营复盘</option></select></label>
           <label>文件名<input name="filename" /></label>
           <label>选择文本文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,text/plain" /></label>
           <label class="field-wide">文字记录内容<textarea name="content" required></textarea></label>
@@ -862,7 +888,7 @@ function renderAdmin() {
           <label>美国时间<input name="us_time" /></label>
           <label>中国日期<input name="cn_date" type="date" /></label>
           <label>中国时间<input name="cn_time" /></label>
-          <label>凯尔周报必填<select name="kyle_report_required"><option value="false">否</option><option value="true">是</option></select></label>
+          <label>美国代运营周报必填<select name="kyle_report_required"><option value="false">否</option><option value="true">是</option></select></label>
           <label class="field-wide">周报截止说明<input name="report_due_note" /></label>
           <label class="field-wide">备注<textarea name="notes"></textarea></label>
         </div>
@@ -877,7 +903,7 @@ function renderAdmin() {
         <h2>会议列表</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>凯尔周报</th><th>操作</th></tr></thead>
+            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营周报</th><th>操作</th></tr></thead>
             <tbody>
               ${meetings.map((m) => `
                 <tr>

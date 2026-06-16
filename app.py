@@ -334,12 +334,12 @@ def default_state() -> dict[str, Any]:
                 {
                     "id": "link_part1",
                     "part": "part1",
-                    "title": "第一部分：凯尔直营店周报",
+                    "title": "第一部分：美国代运营周报",
                     "url": "",
                     "meeting_id": "",
                     "password": "",
-                    "host": "凯尔/主持人",
-                    "notes": "用于凯尔汇报直营店周报。",
+                    "host": "美国代运营/主持人",
+                    "notes": "用于美国代运营汇报直营店周报。",
                 },
                 {
                     "id": "link_part2",
@@ -356,7 +356,7 @@ def default_state() -> dict[str, Any]:
                 "所有参会人单独进入腾讯会议，不共用账号。",
                 "腾讯会议显示名必须能和系统人员档案匹配。",
                 "每周会前填写自己的会前备注。",
-                "凯尔从2026-06-22中国时间这次周会开始，会前必须填写直营店周报。",
+                "美国代运营从2026-06-22中国时间这次周会开始，会前必须填写直营店周报。",
             ],
         },
         "meetings": [
@@ -383,8 +383,8 @@ def default_state() -> dict[str, Any]:
                 "cn_date": "2026-06-22",
                 "cn_time": "11:00",
                 "kyle_report_required": True,
-                "report_due_note": "凯尔需在会前3-6小时完成直营店周报。",
-                "notes": "从这次开始正式执行凯尔会前周报、会后上传两段腾讯会议文字记录。",
+                "report_due_note": "美国代运营需在会前3-6小时完成直营店周报。",
+                "notes": "从这次开始正式执行美国代运营会前周报、会后上传两段腾讯会议文字记录。",
                 "created_at": created_at,
             },
         ],
@@ -522,10 +522,27 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("settings", {})
     state["settings"].setdefault("meeting_links", defaults["settings"]["meeting_links"])
     state["settings"].setdefault("meeting_rules", defaults["settings"]["meeting_rules"])
+    for link in state["settings"].get("meeting_links", []):
+        if link.get("id") == "link_part1":
+            if "凯尔" in str(link.get("title") or ""):
+                link["title"] = "第一部分：美国代运营周报"
+            if "凯尔" in str(link.get("host") or ""):
+                link["host"] = "美国代运营/主持人"
+            if "凯尔" in str(link.get("notes") or ""):
+                link["notes"] = "用于美国代运营汇报直营店周报。"
+    state["settings"]["meeting_rules"] = [
+        str(rule).replace("凯尔从", "美国代运营从").replace("凯尔", "美国代运营")
+        for rule in state["settings"].get("meeting_rules", [])
+    ]
+    for meeting in state.get("meetings", []):
+        if "凯尔" in str(meeting.get("report_due_note") or ""):
+            meeting["report_due_note"] = str(meeting.get("report_due_note") or "").replace("凯尔", "美国代运营")
+        if "凯尔" in str(meeting.get("notes") or ""):
+            meeting["notes"] = str(meeting.get("notes") or "").replace("凯尔", "美国代运营")
     state.setdefault("audit_logs", [])
     role_by_person = {
         "person_boss": ["role_partner_boss", "role_meeting_host"],
-        "person_kyle": ["role_us_self_ops"],
+        "person_kyle": ["role_us_agency_ops"],
         "person_us_warehouse": ["role_us_warehouse"],
         "person_cn_warehouse": ["role_sz_warehouse"],
         "person_cn_purchase": ["role_sz_product_ops"],
