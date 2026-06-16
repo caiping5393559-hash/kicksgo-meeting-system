@@ -424,6 +424,12 @@ p {
   color: var(--navy);
 }
 
+.metric-action {
+  margin-top: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);

@@ -36,7 +36,6 @@ FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicks
 AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
 MEETING_HOST_ROLE_ID = "role_meeting_host"
 
-AGENDA_REVIEW = "回顾上周会议纪要"
 AGENDA_AGENCY = "美国代运营内部评估"
 AGENDA_DOMESTIC = "国内货品与采购"
 AGENDA_US_WAREHOUSE = "美国仓库与履约"
@@ -46,14 +45,13 @@ AGENDA_TECH = "技术与系统"
 AGENDA_DECISION = "本周决策与下周行动项"
 
 ROLE_AGENDA_MAP = {
-    "role_us_self_ops": AGENDA_AGENCY,
+    "role_us_self_ops": AGENDA_PARTNERS,
     "role_us_agency_ops": AGENDA_AGENCY,
     "role_us_warehouse": AGENDA_US_WAREHOUSE,
     "role_sz_warehouse": AGENDA_DOMESTIC,
     "role_sz_product_ops": AGENDA_DOMESTIC,
     "role_sz_finance": AGENDA_FINANCE,
     "role_cn_tech": AGENDA_TECH,
-    "role_cn_admin": AGENDA_DECISION,
     "role_meeting_host": AGENDA_DECISION,
     "role_partner_boss": AGENDA_DECISION,
 }
@@ -742,8 +740,8 @@ def agenda_module_for_role(role: dict[str, Any] | None) -> str:
         return AGENDA_AGENCY
     if re.search(r"合作|店铺|tiktok|ken|诺诺|渠道", text):
         return AGENDA_PARTNERS
-    if re.search(r"行政|主持|会议|纪要|归档", text):
-        return AGENDA_REVIEW
+    if re.search(r"行政|纪要|归档", text):
+        return ""
     return AGENDA_DECISION
 
 

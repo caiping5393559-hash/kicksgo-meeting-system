@@ -14,7 +14,7 @@ const MEETING_HOST_ROLE_ID = "role_meeting_host";
 const pages = [
   ["dashboard", "周会首页"],
   ["meetings", "会议列表"],
-  ["report", "美国代运营周报"],
+  ["report", "美国代运营周报填写"],
   ["notes", "会前备注"],
   ["transcripts", "会议文字记录"],
   ["actions", "行动项"],
@@ -22,16 +22,15 @@ const pages = [
 ];
 
 const part2Agenda = [
-  ["8分钟", "美国代运营内部评估", "美国代运营 / 合伙人", "完成代运营第一部分后，本板块先讲行动项状态，再讲会前备注，再把周报和会议信息转成内部判断：人、货、流量、内容、价格、仓库。"],
+  ["8分钟", "美国代运营内部评估", "全体参会人", "大家一起讨论第一部分代运营周报信息，形成内部判断：人、货、流量、内容、价格、仓库。"],
   ["8分钟", "国内货品与采购", "深圳货品运营 / 深圳仓库", "先讲自己名下行动项状态，再讲会前备注，再讲爆款SKU、缺货SKU、补货进度、价格优势、下周直播支持。"],
   ["8分钟", "美国仓库与履约", "美国仓库", "先讲自己名下行动项状态，再讲会前备注，再讲24h发货率、延迟、错发漏发、退件丢件、是否支持爆单。"],
   ["6分钟", "财务与利润复盘", "深圳财务", "先讲自己名下行动项状态，再讲会前备注，再讲成本、利润、应收应付、回款、账务异常和需要决策事项。"],
-  ["5分钟", "其他TikTok店铺与合作方", "Ken/诺诺/合作方负责人", "先讲自己名下行动项状态，再讲会前备注，再讲其他店铺、合作方店铺、继续供货或暂停建议。"],
-  ["3分钟", "技术与系统", "国内技术", "先讲自己名下行动项状态，再讲会前备注，再讲系统、数据上传、腾讯会议名称匹配、权限问题。"],
-  ["5分钟", "本周决策与下周行动项", "主持人 / 合伙人", "所有人讲完后，主持人总结上周行动项完成情况，再讨论当前决策与下周行动项；每项必须明确负责人、截止日期、需要配合人。"],
+  ["5分钟", "其他TikTok店铺与合作方", "美国自雇运营", "先讲自己名下行动项状态，再讲会前备注，再讲自营其他店、合作方店铺、继续供货或暂停建议。"],
+  ["3分钟", "技术与系统", "国内技术", "系统开发、数据上传、API对接、权限问题。"],
+  ["5分钟", "本周决策与下周行动项", "合伙人 / 会议主持人", "所有合伙人和会议主持人总结当前决策与下周行动项；每项必须明确负责人、截止日期、需要配合人。"],
 ];
 
-const AGENDA_REVIEW = "回顾上周会议纪要";
 const AGENDA_AGENCY = "美国代运营内部评估";
 const AGENDA_DOMESTIC = "国内货品与采购";
 const AGENDA_US_WAREHOUSE = "美国仓库与履约";
@@ -41,14 +40,13 @@ const AGENDA_TECH = "技术与系统";
 const AGENDA_DECISION = "本周决策与下周行动项";
 
 const roleAgendaMap = {
-  role_us_self_ops: AGENDA_AGENCY,
+  role_us_self_ops: AGENDA_PARTNERS,
   role_us_agency_ops: AGENDA_AGENCY,
   role_us_warehouse: AGENDA_US_WAREHOUSE,
   role_sz_warehouse: AGENDA_DOMESTIC,
   role_sz_product_ops: AGENDA_DOMESTIC,
   role_sz_finance: AGENDA_FINANCE,
   role_cn_tech: AGENDA_TECH,
-  role_cn_admin: AGENDA_DECISION,
   role_meeting_host: AGENDA_DECISION,
   role_partner_boss: AGENDA_DECISION,
 };
@@ -168,7 +166,7 @@ function hasBusinessRole(roleId, user = app.user) {
   return (user?.business_role_ids || []).includes(roleId);
 }
 
-function canViewAgencyReport() {
+function canFillAgencyReport() {
   return hasBusinessRole(AGENCY_OPS_ROLE_ID);
 }
 
@@ -199,7 +197,7 @@ function roleAgendaTitle(role) {
   if (/技术|系统|数据|自动化/.test(text)) return AGENDA_TECH;
   if (/代运营|自雇运营|直播|主播|达人/.test(text)) return AGENDA_AGENCY;
   if (/合作|店铺|tiktok|ken|诺诺|渠道/.test(text)) return AGENDA_PARTNERS;
-  if (/行政|主持|会议|纪要|归档/.test(text)) return AGENDA_REVIEW;
+  if (/行政|纪要|归档/.test(text)) return "";
   return AGENDA_DECISION;
 }
 
@@ -231,6 +229,14 @@ function noteAgendaTitle(note) {
 }
 
 function agendaRoleBindingsHtml(agendaTitle) {
+  if (agendaTitle === AGENDA_AGENCY) {
+    return `
+      <div class="agenda-role-card">
+        <strong>全体参会人</strong>
+        <span>共同讨论</span>
+      </div>
+    `;
+  }
   const roles = (app.data?.business_roles || []).filter((role) => roleAgendaTitle(role) === agendaTitle);
   if (!roles.length) return `<span class="muted">暂无对应角色</span>`;
   return roles.map((role) => {
@@ -558,6 +564,7 @@ function renderAppShell() {
   qs("#appView").classList.remove("hidden");
   const visiblePages = pages.filter(([key]) => {
     if (key === "admin") return app.user?.role === "admin";
+    if (key === "report") return canFillAgencyReport();
     if (key === "transcripts") return canViewTranscripts();
     return true;
   });
@@ -623,6 +630,12 @@ function renderDashboard() {
   const fallbackKyle = (app.data.people || []).find((p) => p.id === "person_kyle") || {};
   const reportPersonIds = agencyPersonIds.length ? agencyPersonIds : [fallbackKyle.id].filter(Boolean);
   const report = reports.find((r) => r.meeting_id === meeting?.id && reportPersonIds.includes(r.person_id));
+  const reportStatus = report ? "已填写" : meeting?.kyle_report_required ? "待填写" : "不强制";
+  const reportAction = report
+    ? `<button type="button" class="plain-btn metric-action open-agency-report" data-meeting-id="${escapeHtml(meeting?.id || "")}" data-person-id="${escapeHtml(report.person_id || "")}">查看</button>`
+    : canFillAgencyReport()
+      ? `<button type="button" class="plain-btn metric-action open-agency-report" data-meeting-id="${escapeHtml(meeting?.id || "")}" data-person-id="${escapeHtml(app.user?.person_id || "")}">去填写</button>`
+      : "";
   const part1Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part1");
   const part2Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part2");
   setTitle("周会首页", "下次会议、两段腾讯会议链接、美国代运营周报状态、文字记录上传状态和第二部分流程。");
@@ -637,7 +650,7 @@ function renderDashboard() {
           <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
         </div>
         <div class="metric-row">
-          <div class="metric"><span>美国代运营周报</span><strong>${report ? "已保存" : meeting?.kyle_report_required ? "待填写" : "不强制"}</strong></div>
+          <div class="metric"><span>美国代运营周报</span><strong>${reportStatus}</strong>${reportAction}</div>
           <div class="metric"><span>第1段文字记录</span><strong>${transcriptMetricText(part1Uploaded, meeting)}</strong></div>
           <div class="metric"><span>第2段文字记录</span><strong>${transcriptMetricText(part2Uploaded, meeting)}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
@@ -692,6 +705,9 @@ function renderDashboard() {
       </div>
     </div>
   `;
+  document.querySelectorAll(".open-agency-report").forEach((btn) => {
+    btn.addEventListener("click", () => openAgencyReport(btn.dataset.meetingId, btn.dataset.personId));
+  });
 }
 
 function renderMeetings() {
@@ -756,8 +772,17 @@ function renderMeetings() {
   `;
 }
 
+function openAgencyReport(meetingId = "", personId = "") {
+  if (meetingId) sessionStorage.setItem("reportMeetingId", meetingId);
+  if (personId) sessionStorage.setItem("reportPersonId", personId);
+  app.page = "report";
+  renderPage();
+  scrollToPageTop();
+}
+
 function renderReport() {
-  const meeting = currentMeeting();
+  const storedMeetingId = sessionStorage.getItem("reportMeetingId") || "";
+  const meeting = (app.data.meetings || []).find((item) => item.id === storedMeetingId) || currentMeeting();
   const people = app.data.people || [];
   const users = app.data.users || [];
   const peopleById = new Map(people.map((p) => [p.id, p]));
@@ -776,7 +801,7 @@ function renderReport() {
     reportPeople.push({ person, user });
   });
   const reportPersonIds = new Set(reportPeople.map((item) => item.person.id));
-  const canEditReport = canViewAgencyReport();
+  const canEditReport = canFillAgencyReport();
   const canChoose = ["admin", "manager"].includes(app.user.role);
   const defaultPersonId = agencyPersonIds[0] || "";
   const storedPersonId = sessionStorage.getItem("reportPersonId") || "";
@@ -815,6 +840,10 @@ function renderReport() {
     sessionStorage.setItem("reportPersonId", event.target.value);
     renderReport();
   });
+  qs('select[name="meeting_id"]')?.addEventListener("change", (event) => {
+    sessionStorage.setItem("reportMeetingId", event.target.value);
+    renderReport();
+  });
   if (canEditReport) qs("#reportForm").addEventListener("submit", saveReport);
 }
 
@@ -837,7 +866,7 @@ function meetingOptions(selectedId) {
 
 async function saveReport(event) {
   event.preventDefault();
-  if (!canViewAgencyReport()) {
+  if (!canFillAgencyReport()) {
     showMessage("#reportMessage", "只有美国代运营角色可以填写或修改周报");
     return;
   }
@@ -1759,6 +1788,10 @@ document.addEventListener("click", (event) => {
   const nav = event.target.closest(".nav-btn");
   if (nav) {
     app.page = nav.dataset.page;
+    if (app.page === "report") {
+      sessionStorage.removeItem("reportMeetingId");
+      sessionStorage.removeItem("reportPersonId");
+    }
     renderPage();
     scrollToPageTop();
   }
