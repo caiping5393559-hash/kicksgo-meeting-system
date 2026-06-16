@@ -29,6 +29,27 @@ const part2Agenda = [
   ["3分钟", "本周决策与下周行动项", "你/老陈", "必须执行、待观察、暂停调整，每项明确负责人和截止日期。"],
 ];
 
+const AGENDA_REVIEW = "回顾上周会议纪要";
+const AGENDA_AGENCY = "美国代运营内部评估";
+const AGENDA_DOMESTIC = "国内货品与采购";
+const AGENDA_US_WAREHOUSE = "美国仓库与履约";
+const AGENDA_PARTNERS = "其他TikTok店铺与合作方";
+const AGENDA_TECH = "技术与系统";
+const AGENDA_DECISION = "本周决策与下周行动项";
+
+const roleAgendaMap = {
+  role_us_self_ops: AGENDA_AGENCY,
+  role_us_agency_ops: AGENDA_AGENCY,
+  role_us_warehouse: AGENDA_US_WAREHOUSE,
+  role_sz_warehouse: AGENDA_DOMESTIC,
+  role_sz_product_ops: AGENDA_DOMESTIC,
+  role_sz_finance: AGENDA_DOMESTIC,
+  role_cn_tech: AGENDA_TECH,
+  role_cn_admin: AGENDA_REVIEW,
+  role_meeting_host: AGENDA_DECISION,
+  role_partner_boss: AGENDA_DECISION,
+};
+
 const reportSections = [
   ["1. 本周经营总览", [
     ["total_gmv", "总GMV"], ["total_orders", "总订单量"], ["aov", "平均客单价"],
@@ -137,6 +158,78 @@ function canViewAgencyReport() {
 
 function userDisplayName(user) {
   return personName(user?.person_id) || user?.username || "";
+}
+
+function roleAgendaTitle(role) {
+  if (!role) return AGENDA_DECISION;
+  if (roleAgendaMap[role.id]) return roleAgendaMap[role.id];
+  const text = `${role.name || ""} ${role.category || ""} ${role.description || ""} ${(role.aliases || []).join(" ")}`.toLowerCase();
+  if (/美国仓库|us warehouse|履约|物流/.test(text)) return AGENDA_US_WAREHOUSE;
+  if (/深圳仓库|国内仓库|深圳货品|采购|货品|供应链|财务/.test(text)) return AGENDA_DOMESTIC;
+  if (/技术|系统|数据|自动化/.test(text)) return AGENDA_TECH;
+  if (/代运营|自雇运营|直播|主播|达人/.test(text)) return AGENDA_AGENCY;
+  if (/合作|店铺|tiktok|ken|诺诺|渠道/.test(text)) return AGENDA_PARTNERS;
+  if (/行政|主持|会议|纪要|归档/.test(text)) return AGENDA_REVIEW;
+  return AGENDA_DECISION;
+}
+
+function roleIdsForPerson(personId) {
+  return (app.data?.users || [])
+    .filter((user) => user.person_id === personId && user.status !== "disabled")
+    .flatMap((user) => user.business_role_ids || []);
+}
+
+function agendaTitleForRoleIds(roleIds = []) {
+  const roles = roleIds
+    .map((id) => (app.data?.business_roles || []).find((role) => role.id === id))
+    .filter(Boolean);
+  return roles.length ? roleAgendaTitle(roles[0]) : "";
+}
+
+function noteAgendaTitle(note) {
+  const known = part2Agenda.map((row) => row[1]);
+  if (known.includes(note?.module)) return note.module;
+  const byRole = agendaTitleForRoleIds(roleIdsForPerson(note?.person_id));
+  if (byRole) return byRole;
+  const text = String(note?.module || "");
+  if (/仓库|物流|履约/.test(text)) return AGENDA_US_WAREHOUSE;
+  if (/货品|采购|财务/.test(text)) return AGENDA_DOMESTIC;
+  if (/技术|系统/.test(text)) return AGENDA_TECH;
+  if (/合作|店铺|达人/.test(text)) return AGENDA_PARTNERS;
+  return AGENDA_DECISION;
+}
+
+function agendaRoleBindingsHtml(agendaTitle) {
+  const roles = (app.data?.business_roles || []).filter((role) => roleAgendaTitle(role) === agendaTitle);
+  if (!roles.length) return `<span class="muted">暂无对应角色</span>`;
+  return roles.map((role) => {
+    const boundUsers = (app.data?.users || [])
+      .filter((user) => user.status !== "disabled" && (user.business_role_ids || []).includes(role.id))
+      .map((user) => userDisplayName(user))
+      .filter(Boolean);
+    return `
+      <div class="agenda-owner-line">
+        <strong>${escapeHtml(role.name || role.id)}</strong>
+        <span>${escapeHtml(boundUsers.join("、") || "未绑定用户")}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function agendaNotesHtml(agendaTitle, meetingId) {
+  const notes = (app.data?.pre_meeting_notes || [])
+    .filter((note) => note.meeting_id === meetingId && noteAgendaTitle(note) === agendaTitle && String(note.question || "").trim());
+  if (!notes.length) return "";
+  return `
+    <div class="agenda-notes">
+      ${notes.map((note) => `
+        <div class="agenda-note">
+          <strong>${escapeHtml(personName(note.person_id) || "未绑定人员")}</strong>
+          <p>${escapeHtml(note.question || "")}</p>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function registeredPersonOptions(selectedId = "", emptyText = "待定") {
@@ -501,8 +594,12 @@ function renderDashboard() {
           ${part2Agenda.map((row) => `
             <div class="agenda-row">
               <span class="tag">${row[0]}</span>
-              <div><strong>${escapeHtml(row[1])}</strong><br><span class="muted">${escapeHtml(row[3])}</span></div>
-              <span>${escapeHtml(row[2])}</span>
+              <div>
+                <strong>${escapeHtml(row[1])}</strong><br>
+                <span class="muted">${escapeHtml(row[3])}</span>
+                ${agendaNotesHtml(row[1], meeting?.id)}
+              </div>
+              <div class="agenda-owner">${agendaRoleBindingsHtml(row[1])}</div>
             </div>
           `).join("")}
         </div>
@@ -688,68 +785,46 @@ async function saveReport(event) {
 
 function renderNotes() {
   const meeting = currentMeeting();
-  const canManage = ["admin", "manager"].includes(app.user.role);
   const notes = app.data.pre_meeting_notes || [];
-  setTitle("会前备注", "每个人周会前写下本周要提出的问题、需要谁配合、建议怎么处理。");
+  const ownNote = notes.find((note) => note.meeting_id === meeting?.id && note.person_id === app.user.person_id) || {};
+  setTitle("会前备注", "每个人只需要提前写下本周例会上想提出的问题，会上再讨论负责人和解决方式。");
   qs("#content").innerHTML = `
     <div class="grid">
-      <form id="noteForm" class="panel">
-        <h2>新增 / 修改备注</h2>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
-          ${canManage ? `<label>填写人<select name="person_id">${registeredPersonOptions(app.user.person_id, "请选择注册用户")}</select></label>` : ""}
-          <label>会议部分<select name="meeting_part"><option value="part1">第一部分：美国代运营周报</option><option value="part2" selected>第二部分：内部复盘</option></select></label>
-          <label>模块<select name="module"><option>货品</option><option>仓库</option><option>物流</option><option>直播</option><option>达人</option><option>技术</option><option>合作方</option><option>财务</option><option>其他</option></select></label>
-          <label>优先级<select name="priority"><option>高</option><option selected>中</option><option>低</option></select></label>
-          <label>需要会议决策<select name="needs_decision"><option value="false">否</option><option value="true">是</option></select></label>
-          <label class="field-wide">我要提出的问题<textarea name="question" required></textarea></label>
-          <label class="field-wide">我需要谁配合<textarea name="support_needed"></textarea></label>
-          <label class="field-wide">我建议的处理方式<textarea name="suggestion"></textarea></label>
-          <label>会议中已提到<select name="mentioned"><option value="false">否</option><option value="true">是</option></select></label>
-          <label class="field-wide">会后处理结果<textarea name="result"></textarea></label>
+      <form id="noteForm" class="panel simple-note-form">
+        <div class="section-title">
+          <div>
+            <h2>${escapeHtml(meeting?.title || "当前周会")}</h2>
+            <p class="muted">美国时间 ${escapeHtml(meeting?.us_date || "")} ${escapeHtml(meeting?.us_time || "")} / 中国时间 ${escapeHtml(meeting?.cn_date || "")} ${escapeHtml(meeting?.cn_time || "")}</p>
+          </div>
+          <span class="tag">${escapeHtml(userBusinessRoleNames(app.user))}</span>
         </div>
+        <input type="hidden" name="id" value="${escapeHtml(ownNote.id || "")}" />
+        <input type="hidden" name="meeting_id" value="${escapeHtml(meeting?.id || "")}" />
+        <label>我想在会上提出的问题<textarea name="question" required placeholder="只写你要上会提的问题。负责人、解决方式和行动项，会上讨论后再定。">${escapeHtml(ownNote.question || "")}</textarea></label>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">保存备注</button>
-          <button type="button" class="plain-btn" id="clearNoteBtn">清空</button>
           <span id="noteMessage" class="message"></span>
         </div>
       </form>
       <div class="panel">
-        <h2>本周会前备注</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>填写人</th><th>部分</th><th>模块</th><th>优先级</th><th>问题</th><th>操作</th></tr></thead>
-            <tbody>
-              ${notes.filter((n) => n.meeting_id === meeting?.id).map((n) => `
-                <tr>
-                  <td>${escapeHtml(personName(n.person_id))}</td>
-                  <td>${n.meeting_part === "part1" ? "第一部分" : "第二部分"}</td>
-                  <td>${escapeHtml(n.module)}</td>
-                  <td>${escapeHtml(n.priority)}</td>
-                  <td>${escapeHtml(n.question)}</td>
-                  <td><button class="plain-btn edit-note" data-id="${n.id}">编辑</button></td>
-                </tr>
-              `).join("") || '<tr><td colspan="6" class="muted">暂无备注</td></tr>'}
-            </tbody>
-          </table>
+        <h2>内部经营复盘会流程</h2>
+        <div class="agenda">
+          ${part2Agenda.map((row) => `
+            <div class="agenda-row">
+              <span class="tag">${row[0]}</span>
+              <div>
+                <strong>${escapeHtml(row[1])}</strong><br>
+                <span class="muted">${escapeHtml(row[3])}</span>
+                ${agendaNotesHtml(row[1], meeting?.id) || '<div class="agenda-notes muted">暂无会前备注</div>'}
+              </div>
+              <div class="agenda-owner">${agendaRoleBindingsHtml(row[1])}</div>
+            </div>
+          `).join("")}
         </div>
       </div>
     </div>
   `;
   qs("#noteForm").addEventListener("submit", saveNote);
-  qs("#clearNoteBtn").addEventListener("click", () => qs("#noteForm").reset());
-  document.querySelectorAll(".edit-note").forEach((btn) => btn.addEventListener("click", () => fillNote(btn.dataset.id)));
-}
-
-function fillNote(id) {
-  const note = (app.data.pre_meeting_notes || []).find((n) => n.id === id);
-  if (!note) return;
-  const form = qs("#noteForm");
-  ensurePersonSelectValue(form.elements.person_id, note.person_id);
-  for (const [key, value] of Object.entries(note)) {
-    if (form.elements[key]) form.elements[key].value = typeof value === "boolean" ? String(value) : value;
-  }
 }
 
 async function saveNote(event) {
@@ -758,8 +833,6 @@ async function saveNote(event) {
   showMessage("#noteMessage", "保存中...", true);
   const form = new FormData(event.currentTarget);
   const body = Object.fromEntries(form.entries());
-  body.needs_decision = body.needs_decision === "true";
-  body.mentioned = body.mentioned === "true";
   body.person_id = body.person_id || app.user.person_id;
   try {
     const res = await api("/api/notes/save", { method: "POST", body });

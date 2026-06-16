@@ -32,6 +32,27 @@ SESSION_SECRET = os.environ.get("SESSION_SECRET") or "dev-change-me-kicksgo-week
 FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicksgo_meeting")
 AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
 
+AGENDA_REVIEW = "回顾上周会议纪要"
+AGENDA_AGENCY = "美国代运营内部评估"
+AGENDA_DOMESTIC = "国内货品与采购"
+AGENDA_US_WAREHOUSE = "美国仓库与履约"
+AGENDA_PARTNERS = "其他TikTok店铺与合作方"
+AGENDA_TECH = "技术与系统"
+AGENDA_DECISION = "本周决策与下周行动项"
+
+ROLE_AGENDA_MAP = {
+    "role_us_self_ops": AGENDA_AGENCY,
+    "role_us_agency_ops": AGENDA_AGENCY,
+    "role_us_warehouse": AGENDA_US_WAREHOUSE,
+    "role_sz_warehouse": AGENDA_DOMESTIC,
+    "role_sz_product_ops": AGENDA_DOMESTIC,
+    "role_sz_finance": AGENDA_DOMESTIC,
+    "role_cn_tech": AGENDA_TECH,
+    "role_cn_admin": AGENDA_REVIEW,
+    "role_meeting_host": AGENDA_DECISION,
+    "role_partner_boss": AGENDA_DECISION,
+}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -620,6 +641,46 @@ def person_by_id(state: dict[str, Any], person_id: str) -> dict[str, Any] | None
 
 def business_role_by_id(state: dict[str, Any], role_id: str) -> dict[str, Any] | None:
     return next((r for r in state.get("business_roles", []) if r.get("id") == role_id), None)
+
+
+def agenda_module_for_role(role: dict[str, Any] | None) -> str:
+    if not role:
+        return AGENDA_DECISION
+    role_id = str(role.get("id") or "")
+    if role_id in ROLE_AGENDA_MAP:
+        return ROLE_AGENDA_MAP[role_id]
+    text = " ".join(
+        [
+            str(role.get("name") or ""),
+            str(role.get("category") or ""),
+            str(role.get("description") or ""),
+            " ".join(str(alias) for alias in role.get("aliases", []) or []),
+        ]
+    ).lower()
+    if re.search(r"美国仓库|us warehouse|履约|物流", text):
+        return AGENDA_US_WAREHOUSE
+    if re.search(r"深圳仓库|国内仓库|深圳货品|采购|货品|供应链|财务", text):
+        return AGENDA_DOMESTIC
+    if re.search(r"技术|系统|数据|自动化", text):
+        return AGENDA_TECH
+    if re.search(r"代运营|自雇运营|直播|主播|达人", text):
+        return AGENDA_AGENCY
+    if re.search(r"合作|店铺|tiktok|ken|诺诺|渠道", text):
+        return AGENDA_PARTNERS
+    if re.search(r"行政|主持|会议|纪要|归档", text):
+        return AGENDA_REVIEW
+    return AGENDA_DECISION
+
+
+def agenda_module_for_person(state: dict[str, Any], person_id: str) -> str:
+    for account in state.get("users", []):
+        if account.get("person_id") != person_id or account.get("status") == "disabled":
+            continue
+        for role_id in account.get("business_role_ids") or []:
+            role = business_role_by_id(state, str(role_id))
+            if role:
+                return agenda_module_for_role(role)
+    return AGENDA_DECISION
 
 
 def clean_business_role_ids(state: dict[str, Any], values: Any) -> list[str]:
@@ -1266,25 +1327,40 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_save_note(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         note_id = str(payload.get("id") or "")
-        existing = next((n for n in state["pre_meeting_notes"] if n.get("id") == note_id), None)
+        meeting_id = str(payload.get("meeting_id") or "")
         person_id = str(payload.get("person_id") or user.get("person_id") or "")
+        if not is_manager(user) and person_id != user.get("person_id"):
+            person_id = str(user.get("person_id") or "")
+        existing = None
+        if note_id:
+            existing = next((n for n in state["pre_meeting_notes"] if n.get("id") == note_id), None)
+        if not existing:
+            existing = next(
+                (
+                    n for n in state["pre_meeting_notes"]
+                    if n.get("meeting_id") == meeting_id and n.get("person_id") == person_id
+                ),
+                None,
+            )
         if existing and not is_manager(user) and existing.get("person_id") != user.get("person_id"):
             self.send_json({"ok": False, "error": "No permission"}, 403)
             return
-        if not is_manager(user) and person_id != user.get("person_id"):
-            person_id = str(user.get("person_id") or "")
+        question = str(payload.get("question") or "").strip()
+        if not question:
+            self.send_json({"ok": False, "error": "会前备注不能为空"}, 400)
+            return
         data = {
-            "meeting_id": str(payload.get("meeting_id") or ""),
+            "meeting_id": meeting_id,
             "person_id": person_id,
-            "meeting_part": str(payload.get("meeting_part") or "part2"),
-            "module": str(payload.get("module") or ""),
-            "question": str(payload.get("question") or ""),
-            "support_needed": str(payload.get("support_needed") or ""),
-            "suggestion": str(payload.get("suggestion") or ""),
-            "needs_decision": bool(payload.get("needs_decision")),
-            "priority": str(payload.get("priority") or "中"),
-            "mentioned": bool(payload.get("mentioned")),
-            "result": str(payload.get("result") or ""),
+            "meeting_part": "part2",
+            "module": agenda_module_for_person(state, person_id),
+            "question": question,
+            "support_needed": "",
+            "suggestion": "",
+            "needs_decision": False,
+            "priority": "中",
+            "mentioned": False,
+            "result": "",
             "updated_at": now_iso(),
             "updated_by": user.get("id"),
         }

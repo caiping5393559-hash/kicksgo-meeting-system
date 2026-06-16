@@ -504,7 +504,7 @@ tr:last-child td {
 
 .agenda-row {
   display: grid;
-  grid-template-columns: 74px 1fr 110px;
+  grid-template-columns: 74px minmax(0, 1fr) minmax(220px, 30%);
   gap: 12px;
   align-items: start;
   border: 1px solid var(--line);
@@ -515,6 +515,55 @@ tr:last-child td {
 
 .agenda-row strong {
   color: var(--navy);
+}
+
+.agenda-owner {
+  display: grid;
+  gap: 6px;
+}
+
+.agenda-owner-line {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.agenda-owner-line strong {
+  color: var(--navy);
+}
+
+.agenda-owner-line span {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.agenda-notes {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.agenda-note {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  border-left: 3px solid var(--blue);
+  border-radius: 6px;
+  background: #f6f9fc;
+}
+
+.agenda-note strong {
+  font-size: 12px;
+}
+
+.agenda-note p {
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .link-list {
@@ -765,6 +814,7 @@ tr:last-child td {
   .grid.two,
   .grid.three,
   .grid.four,
+  .agenda-row,
   .metric-row,
   .form-grid,
   .form-grid.two,
