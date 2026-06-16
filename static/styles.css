@@ -529,6 +529,16 @@ tr:last-child td {
   min-width: 120px;
 }
 
+.multi-select {
+  min-width: 180px;
+  min-height: 106px;
+  padding: 6px;
+}
+
+.danger-text {
+  color: var(--red);
+}
+
 @media (max-width: 920px) {
   .app-shell {
     grid-template-columns: 1fr;

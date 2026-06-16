@@ -72,6 +72,85 @@ def normalize_name(value: str) -> str:
     return value
 
 
+def split_aliases(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = re.split(r"[,，\n\r]+", str(value or ""))
+    aliases: list[str] = []
+    for item in raw_items:
+        alias = str(item or "").strip()
+        if alias and alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
+def default_business_roles() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "role_partner_boss",
+            "name": "合伙人（boss）",
+            "category": "管理层",
+            "description": "整体经营判断、资源投入、最终决策。",
+        },
+        {
+            "id": "role_us_self_ops",
+            "name": "美国自雇运营",
+            "category": "美国运营",
+            "description": "美国本地直营店运营、直播执行、现场协调。",
+        },
+        {
+            "id": "role_us_agency_ops",
+            "name": "美国代运营",
+            "category": "美国运营",
+            "description": "外部代运营、主播团队、美国本地合作执行。",
+        },
+        {
+            "id": "role_us_warehouse",
+            "name": "美国仓库",
+            "category": "美国履约",
+            "description": "美国仓发货、退件、错发漏发、库存现场问题。",
+        },
+        {
+            "id": "role_sz_warehouse",
+            "name": "深圳仓库",
+            "category": "深圳供应链",
+            "description": "深圳仓库存、打包、出错率、发货准备。",
+        },
+        {
+            "id": "role_sz_product_ops",
+            "name": "深圳货品运营",
+            "category": "深圳供应链",
+            "description": "SKU、价格、补货、货品组合、采购和运营节奏。",
+        },
+        {
+            "id": "role_sz_finance",
+            "name": "深圳财务",
+            "category": "财务",
+            "description": "成本、利润、应收应付、账务核对。",
+        },
+        {
+            "id": "role_cn_tech",
+            "name": "国内技术",
+            "category": "技术",
+            "description": "系统、数据、权限、自动化和会议记录处理。",
+        },
+        {
+            "id": "role_cn_admin",
+            "name": "国内行政",
+            "category": "行政",
+            "description": "会议组织、账号跟进、资料归档和行政协调。",
+        },
+        {
+            "id": "role_meeting_host",
+            "name": "会议主持人",
+            "category": "会议管理",
+            "description": "主持周会流程、控制议题顺序、推动结论和行动项收口。",
+            "aliases": ["主持人", "周会主持人"],
+        },
+    ]
+
+
 def default_state() -> dict[str, Any]:
     created_at = now_iso()
     admin_pass = os.environ.get("DEFAULT_ADMIN_PASSWORD", "Kicksgo-Admin-2026!")
@@ -89,6 +168,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": True,
             "meeting_aliases": ["Admin", "管理员"],
+            "mention_aliases": ["系统管理员", "管理员"],
         },
         {
             "id": "person_boss",
@@ -102,6 +182,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": True,
             "meeting_aliases": ["我", "老板", "Aaron", "iPhone"],
+            "mention_aliases": ["老板", "合伙人", "Boss", "Aaron"],
         },
         {
             "id": "person_chen",
@@ -115,6 +196,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["老陈", "Chen"],
+            "mention_aliases": ["老陈", "陈总", "Chen"],
         },
         {
             "id": "person_kyle",
@@ -128,6 +210,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": True,
             "has_login": False,
             "meeting_aliases": ["Kyle", "KYLE", "凯尔"],
+            "mention_aliases": ["Kyle", "KYLE", "凯尔"],
         },
         {
             "id": "person_us_warehouse",
@@ -141,6 +224,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["US Warehouse", "Warehouse", "美国仓库"],
+            "mention_aliases": ["美国仓库", "US Warehouse", "Warehouse"],
         },
         {
             "id": "person_cn_purchase",
@@ -154,6 +238,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["国内采购", "国内运营", "CN Purchase"],
+            "mention_aliases": ["国内采购", "国内运营", "深圳货品", "深圳货品运营", "CN Purchase"],
         },
         {
             "id": "person_cn_warehouse",
@@ -167,6 +252,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["国内仓库", "CN Warehouse"],
+            "mention_aliases": ["国内仓库", "深圳仓库", "CN Warehouse"],
         },
         {
             "id": "person_ken",
@@ -180,6 +266,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["Ken"],
+            "mention_aliases": ["Ken"],
         },
         {
             "id": "person_nono",
@@ -193,6 +280,7 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["诺诺", "Nono", "NuoNuo"],
+            "mention_aliases": ["诺诺", "Nono", "NuoNuo"],
         },
         {
             "id": "person_tech",
@@ -206,10 +294,11 @@ def default_state() -> dict[str, Any]:
             "needs_weekly_report": False,
             "has_login": False,
             "meeting_aliases": ["国际技术", "Tech"],
+            "mention_aliases": ["国际技术", "国内技术", "Tech"],
         },
     ]
     return {
-        "version": 1,
+        "version": 2,
         "created_at": created_at,
         "updated_at": created_at,
         "users": [
@@ -220,6 +309,7 @@ def default_state() -> dict[str, Any]:
                 "role": "admin",
                 "status": "active",
                 "person_id": "person_admin",
+                "business_role_ids": [],
                 "created_at": created_at,
                 "last_login_at": "",
                 "must_change_password": True,
@@ -231,12 +321,14 @@ def default_state() -> dict[str, Any]:
                 "role": "manager",
                 "status": "active",
                 "person_id": "person_boss",
+                "business_role_ids": ["role_partner_boss", "role_meeting_host"],
                 "created_at": created_at,
                 "last_login_at": "",
                 "must_change_password": True,
             },
         ],
         "people": people,
+        "business_roles": default_business_roles(),
         "settings": {
             "meeting_links": [
                 {
@@ -414,15 +506,62 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     defaults = default_state()
     for key, value in defaults.items():
         state.setdefault(key, value)
+    state["version"] = max(int(state.get("version") or 1), int(defaults.get("version") or 1))
+    existing_roles = {role.get("id"): role for role in state.setdefault("business_roles", [])}
+    for role in default_business_roles():
+        if role["id"] not in existing_roles:
+            state["business_roles"].append(role)
+        else:
+            existing_roles[role["id"]].setdefault("name", role["name"])
+            existing_roles[role["id"]].setdefault("category", role["category"])
+            existing_roles[role["id"]].setdefault("description", role["description"])
+            existing_roles[role["id"]].setdefault("aliases", [])
+            for alias in role.get("aliases", []) or []:
+                if alias not in existing_roles[role["id"]]["aliases"]:
+                    existing_roles[role["id"]]["aliases"].append(alias)
     state.setdefault("settings", {})
     state["settings"].setdefault("meeting_links", defaults["settings"]["meeting_links"])
     state["settings"].setdefault("meeting_rules", defaults["settings"]["meeting_rules"])
     state.setdefault("audit_logs", [])
+    role_by_person = {
+        "person_boss": ["role_partner_boss", "role_meeting_host"],
+        "person_kyle": ["role_us_self_ops"],
+        "person_us_warehouse": ["role_us_warehouse"],
+        "person_cn_warehouse": ["role_sz_warehouse"],
+        "person_cn_purchase": ["role_sz_product_ops"],
+        "person_tech": ["role_cn_tech"],
+    }
     for user in state.get("users", []):
         user.setdefault("status", "pending")
         user.setdefault("role", "member")
         user.setdefault("person_id", "")
+        if "business_role_ids" not in user:
+            user["business_role_ids"] = role_by_person.get(str(user.get("person_id") or ""), [])
+        if not isinstance(user.get("business_role_ids"), list):
+            user["business_role_ids"] = []
         user.setdefault("must_change_password", False)
+    for person in state.get("people", []):
+        aliases = person.setdefault("meeting_aliases", [])
+        if not isinstance(aliases, list):
+            person["meeting_aliases"] = []
+        mention_aliases = person.setdefault("mention_aliases", [])
+        if not isinstance(mention_aliases, list):
+            person["mention_aliases"] = []
+        default_person = next((p for p in defaults.get("people", []) if p.get("id") == person.get("id")), None)
+        if default_person:
+            for field in ["meeting_aliases", "mention_aliases"]:
+                for value in default_person.get(field, []) or []:
+                    if value and value not in person[field]:
+                        person[field].append(value)
+        for value in [
+            person.get("real_name"),
+            person.get("chinese_name"),
+            person.get("english_name"),
+            person.get("display_name"),
+        ]:
+            value = str(value or "").strip()
+            if value and value not in person["mention_aliases"]:
+                person["mention_aliases"].append(value)
     return state
 
 
@@ -436,6 +575,22 @@ def user_by_id(state: dict[str, Any], user_id: str) -> dict[str, Any] | None:
 
 def person_by_id(state: dict[str, Any], person_id: str) -> dict[str, Any] | None:
     return next((p for p in state.get("people", []) if p.get("id") == person_id), None)
+
+
+def business_role_by_id(state: dict[str, Any], role_id: str) -> dict[str, Any] | None:
+    return next((r for r in state.get("business_roles", []) if r.get("id") == role_id), None)
+
+
+def clean_business_role_ids(state: dict[str, Any], values: Any) -> list[str]:
+    if not isinstance(values, list):
+        values = []
+    valid = {str(role.get("id")) for role in state.get("business_roles", [])}
+    cleaned: list[str] = []
+    for value in values:
+        role_id = str(value or "").strip()
+        if role_id in valid and role_id not in cleaned:
+            cleaned.append(role_id)
+    return cleaned
 
 
 def get_user_person(state: dict[str, Any], user: dict[str, Any]) -> dict[str, Any] | None:
@@ -490,36 +645,66 @@ def verify_session(token: str) -> str:
 
 def extract_speakers(content: str, state: dict[str, Any]) -> dict[str, Any]:
     alias_map: dict[str, dict[str, Any]] = {}
+    mention_aliases: list[tuple[str, dict[str, Any]]] = []
+    seen_mention_aliases: set[tuple[str, str]] = set()
+    role_aliases: list[tuple[str, dict[str, Any]]] = []
     for person in state.get("people", []):
-        names = [
+        speaker_names = [
             person.get("real_name"),
             person.get("chinese_name"),
             person.get("english_name"),
             person.get("display_name"),
             *(person.get("meeting_aliases") or []),
         ]
-        for name in names:
+        for name in speaker_names:
             key = normalize_name(str(name or ""))
             if key:
                 alias_map[key] = person
+        for name in [
+            person.get("real_name"),
+            person.get("chinese_name"),
+            person.get("english_name"),
+            person.get("display_name"),
+            *(person.get("mention_aliases") or []),
+        ]:
+            alias = str(name or "").strip()
+            key = normalize_name(alias)
+            dedupe_key = (str(person.get("id") or ""), key)
+            if len(key) >= 2 and key not in {"me", "wo", "boss"} and dedupe_key not in seen_mention_aliases:
+                seen_mention_aliases.add(dedupe_key)
+                mention_aliases.append((alias, person))
+    seen_role_aliases: set[tuple[str, str]] = set()
+    for role in state.get("business_roles", []):
+        for alias in [role.get("name"), role.get("category"), *(role.get("aliases") or [])]:
+            alias = str(alias or "").strip()
+            key = normalize_name(alias)
+            dedupe_key = (str(role.get("id") or ""), key)
+            if len(key) >= 2 and dedupe_key not in seen_role_aliases:
+                seen_role_aliases.add(dedupe_key)
+                role_aliases.append((alias, role))
 
     speakers: dict[str, int] = {}
     patterns = [
-        re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*\S"),
+        re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*(?=\S)"),
         re.compile(r"^([^：:\n]{1,40})\s+\d{1,2}:\d{2}(?::\d{2})?\s+"),
-        re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*\S"),
+        re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*(?=\S)"),
     ]
+    body_lines: list[str] = []
     for line in content.splitlines():
         line = line.strip()
         if not line:
             continue
+        body = line
         for pattern in patterns:
             match = pattern.match(line)
             if match:
                 name = match.group(1).strip()
                 if len(name) <= 40:
                     speakers[name] = speakers.get(name, 0) + 1
+                body = line[match.end():].strip()
                 break
+        if body:
+            body_lines.append(body)
     matched = []
     unmatched = []
     for raw, count in sorted(speakers.items(), key=lambda item: (-item[1], item[0])):
@@ -528,7 +713,66 @@ def extract_speakers(content: str, state: dict[str, Any]) -> dict[str, Any]:
             matched.append({"speaker": raw, "count": count, "person_id": person.get("id"), "person_name": person.get("display_name")})
         else:
             unmatched.append({"speaker": raw, "count": count})
-    return {"matched_speakers": matched, "unmatched_speakers": unmatched}
+
+    mentioned: dict[str, dict[str, Any]] = {}
+    mentioned_roles: dict[str, dict[str, Any]] = {}
+    for body in body_lines:
+        matched_people_in_line: set[str] = set()
+        for alias, person in mention_aliases:
+            normalized = normalize_name(alias)
+            if not normalized:
+                continue
+            if re.search(r"[A-Za-z0-9]", alias):
+                hit = bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", body, re.IGNORECASE))
+            else:
+                hit = alias in body
+            if not hit:
+                continue
+            person_id = str(person.get("id") or "")
+            item = mentioned.setdefault(
+                person_id,
+                {
+                    "person_id": person_id,
+                    "person_name": person.get("display_name") or person.get("real_name") or person_id,
+                    "count": 0,
+                    "aliases": [],
+                },
+            )
+            if person_id not in matched_people_in_line:
+                item["count"] += 1
+                matched_people_in_line.add(person_id)
+            if alias not in item["aliases"]:
+                item["aliases"].append(alias)
+        matched_roles_in_line: set[str] = set()
+        for alias, role in role_aliases:
+            if re.search(r"[A-Za-z0-9]", alias):
+                hit = bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", body, re.IGNORECASE))
+            else:
+                hit = alias in body
+            if not hit:
+                continue
+            role_id = str(role.get("id") or "")
+            item = mentioned_roles.setdefault(
+                role_id,
+                {
+                    "role_id": role_id,
+                    "role_name": role.get("name") or role_id,
+                    "count": 0,
+                    "aliases": [],
+                },
+            )
+            if role_id not in matched_roles_in_line:
+                item["count"] += 1
+                matched_roles_in_line.add(role_id)
+            if alias not in item["aliases"]:
+                item["aliases"].append(alias)
+
+    return {
+        "matched_speakers": matched,
+        "unmatched_speakers": unmatched,
+        "mentioned_people": sorted(mentioned.values(), key=lambda item: (-item["count"], item["person_name"])),
+        "mentioned_roles": sorted(mentioned_roles.values(), key=lambda item: (-item["count"], item["role_name"])),
+    }
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -696,6 +940,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return {
                 "users": [sanitize_user(u) for u in state.get("users", [])],
                 "people": state.get("people", []),
+                "business_roles": state.get("business_roles", []),
                 "settings": state.get("settings", {}),
                 "meetings": state.get("meetings", []),
                 "weekly_reports": state.get("weekly_reports", []),
@@ -708,6 +953,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return {
             "users": [sanitize_user(user)],
             "people": [p for p in state.get("people", []) if p.get("id") == person_id],
+            "business_roles": state.get("business_roles", []),
             "settings": state.get("settings", {}),
             "meetings": state.get("meetings", []),
             "weekly_reports": [r for r in state.get("weekly_reports", []) if r.get("person_id") == person_id],
@@ -722,11 +968,19 @@ class AppHandler(BaseHTTPRequestHandler):
         username = str(payload.get("username") or "").strip()
         password = str(payload.get("password") or "")
         display_name = str(payload.get("display_name") or username).strip()
+        meeting_aliases = split_aliases(payload.get("meeting_aliases"))
+        mention_aliases = split_aliases(payload.get("mention_aliases"))
         if not re.match(r"^[A-Za-z0-9_.@-]{3,40}$", username):
             self.send_json({"ok": False, "error": "用户名至少3位，只能包含字母、数字、点、下划线、横线或@"}, 400)
             return
         if len(password) < 6:
             self.send_json({"ok": False, "error": "密码至少6位"}, 400)
+            return
+        if not meeting_aliases:
+            self.send_json({"ok": False, "error": "注册时必须填写腾讯会议参会人名"}, 400)
+            return
+        if not mention_aliases:
+            self.send_json({"ok": False, "error": "注册时必须填写现实姓名、称呼或外号"}, 400)
             return
         if any(u.get("username", "").lower() == username.lower() for u in state.get("users", [])):
             self.send_json({"ok": False, "error": "用户名已存在"}, 400)
@@ -745,7 +999,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "attends_weekly": True,
                 "needs_weekly_report": False,
                 "has_login": True,
-                "meeting_aliases": [display_name, username],
+                "meeting_aliases": meeting_aliases,
+                "mention_aliases": mention_aliases,
             }
         )
         state["users"].append(
@@ -756,6 +1011,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "role": "member",
                 "status": "pending",
                 "person_id": person_id,
+                "business_role_ids": [],
                 "created_at": now_iso(),
                 "last_login_at": "",
                 "must_change_password": False,
@@ -874,6 +1130,8 @@ class AppHandler(BaseHTTPRequestHandler):
             "content_preview": content[:300],
             "matched_speakers": analysis["matched_speakers"],
             "unmatched_speakers": analysis["unmatched_speakers"],
+            "mentioned_people": analysis["mentioned_people"],
+            "mentioned_roles": analysis["mentioned_roles"],
             "uploaded_by": user.get("id"),
             "uploaded_at": now_iso(),
         }
@@ -947,6 +1205,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "role": str(payload.get("role") or "member"),
                     "status": str(payload.get("status") or "active"),
                     "person_id": person_id,
+                    "business_role_ids": clean_business_role_ids(state, payload.get("business_role_ids")),
                     "created_at": now_iso(),
                     "last_login_at": "",
                     "must_change_password": True,
@@ -964,6 +1223,8 @@ class AppHandler(BaseHTTPRequestHandler):
             for key in ["role", "status", "person_id"]:
                 if key in payload:
                     target[key] = payload.get(key)
+            if "business_role_ids" in payload:
+                target["business_role_ids"] = clean_business_role_ids(state, payload.get("business_role_ids"))
             audit(state, user, "admin_save_user", {"user_id": target.get("id")})
             store.save(state, "admin_save_user")
             self.send_json({"ok": True, "user": sanitize_user(target)})
@@ -995,6 +1256,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "needs_weekly_report": bool(payload.get("needs_weekly_report")),
                 "has_login": bool(payload.get("has_login")),
                 "meeting_aliases": payload.get("meeting_aliases") or [],
+                "mention_aliases": payload.get("mention_aliases") or [],
             }
             if existing:
                 existing.update(data)
@@ -1014,6 +1276,57 @@ class AppHandler(BaseHTTPRequestHandler):
                     account["person_id"] = ""
             audit(state, user, "admin_delete_person", {"person_id": person_id})
             store.save(state, "admin_delete_person")
+            self.send_json({"ok": True})
+            return
+        if path == "/api/admin/save-business-role":
+            role_id = str(payload.get("id") or "")
+            existing = business_role_by_id(state, role_id)
+            data = {
+                "name": str(payload.get("name") or "").strip(),
+                "category": str(payload.get("category") or "").strip(),
+                "description": str(payload.get("description") or "").strip(),
+                "aliases": split_aliases(payload.get("aliases")),
+            }
+            if not data["name"]:
+                self.send_json({"ok": False, "error": "业务角色名称不能为空"}, 400)
+                return
+            if existing:
+                existing.update(data)
+                saved = existing
+            else:
+                saved = {"id": new_id("bizrole"), **data}
+                state["business_roles"].append(saved)
+            audit(state, user, "admin_save_business_role", {"role_id": saved["id"]})
+            store.save(state, "admin_save_business_role")
+            self.send_json({"ok": True, "business_role": saved})
+            return
+        if path == "/api/admin/delete-business-role":
+            role_id = str(payload.get("id") or "")
+            if role_id.startswith("role_"):
+                self.send_json({"ok": False, "error": "默认业务角色不能删除，可以直接编辑名称和说明。"}, 400)
+                return
+            state["business_roles"] = [r for r in state.get("business_roles", []) if r.get("id") != role_id]
+            for account in state.get("users", []):
+                account["business_role_ids"] = [rid for rid in account.get("business_role_ids", []) if rid != role_id]
+            audit(state, user, "admin_delete_business_role", {"role_id": role_id})
+            store.save(state, "admin_delete_business_role")
+            self.send_json({"ok": True})
+            return
+        if path == "/api/admin/save-role-users":
+            role_id = str(payload.get("role_id") or "")
+            if not business_role_by_id(state, role_id):
+                self.send_json({"ok": False, "error": "业务角色不存在"}, 404)
+                return
+            user_ids = {str(value) for value in payload.get("user_ids", []) if value}
+            valid_user_ids = {str(account.get("id")) for account in state.get("users", [])}
+            user_ids = user_ids & valid_user_ids
+            for account in state.get("users", []):
+                current = [rid for rid in account.get("business_role_ids", []) if rid != role_id]
+                if account.get("id") in user_ids:
+                    current.append(role_id)
+                account["business_role_ids"] = clean_business_role_ids(state, current)
+            audit(state, user, "admin_save_role_users", {"role_id": role_id, "user_count": len(user_ids)})
+            store.save(state, "admin_save_role_users")
             self.send_json({"ok": True})
             return
         if path == "/api/admin/save-meeting":

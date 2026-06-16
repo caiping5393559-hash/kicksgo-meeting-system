@@ -104,6 +104,24 @@ function personName(id) {
   return person ? person.display_name || person.real_name || person.chinese_name || person.english_name || id : id || "";
 }
 
+function businessRoleName(id) {
+  const role = (app.data?.business_roles || []).find((r) => r.id === id);
+  return role ? role.name || id : id || "";
+}
+
+function userBusinessRoleNames(user) {
+  const names = (user?.business_role_ids || []).map(businessRoleName).filter(Boolean);
+  return names.length ? names.join("、") : "未分配";
+}
+
+function userDisplayName(user) {
+  return personName(user?.person_id) || user?.username || "";
+}
+
+function selectedValues(select) {
+  return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
+}
+
 function meetingName(id) {
   const meeting = (app.data?.meetings || []).find((m) => m.id === id);
   return meeting ? meeting.title : id || "";
@@ -145,7 +163,7 @@ function renderAppShell() {
   qs("#nav").innerHTML = visiblePages
     .map(([key, label]) => `<button class="nav-btn ${app.page === key ? "active" : ""}" data-page="${key}">${label}</button>`)
     .join("");
-  qs("#currentUserLabel").innerHTML = `${escapeHtml(app.person?.display_name || app.user?.username)}<br><span class="muted">${escapeHtml(app.user?.role || "")}</span>`;
+  qs("#currentUserLabel").innerHTML = `${escapeHtml(app.person?.display_name || app.user?.username)}<br><span class="muted">${escapeHtml(app.user?.role || "")} · ${escapeHtml(userBusinessRoleNames(app.user))}</span>`;
   qs("#storageLabel").textContent = app.storage?.backend === "firebase" ? "Firebase 数据库" : "本地测试数据";
   qs("#passwordNotice").classList.toggle("hidden", !app.user?.must_change_password);
   renderPage();
@@ -449,7 +467,7 @@ function renderTranscripts() {
         <h2>已上传记录</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>段落</th><th>文件</th><th>字数</th><th>匹配人员</th><th>未匹配名称</th><th>时间</th></tr></thead>
+            <thead><tr><th>会议</th><th>段落</th><th>文件</th><th>字数</th><th>说话人匹配</th><th>未匹配说话人</th><th>提到人员</th><th>提到角色</th><th>时间</th></tr></thead>
             <tbody>
               ${records.map((r) => `
                 <tr>
@@ -459,9 +477,11 @@ function renderTranscripts() {
                   <td>${escapeHtml(r.char_count)}</td>
                   <td>${(r.matched_speakers || []).map((s) => escapeHtml(`${s.speaker}→${s.person_name}`)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.unmatched_speakers || []).map((s) => escapeHtml(s.speaker)).join("<br>") || '<span class="muted">-</span>'}</td>
+                  <td>${(r.mentioned_people || []).slice(0, 8).map((p) => escapeHtml(`${p.person_name}（${p.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
+                  <td>${(r.mentioned_roles || []).slice(0, 8).map((role) => escapeHtml(`${role.role_name}（${role.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${escapeHtml(r.uploaded_at || "")}</td>
                 </tr>
-              `).join("") || '<tr><td colspan="7" class="muted">暂无上传记录</td></tr>'}
+              `).join("") || '<tr><td colspan="9" class="muted">暂无上传记录</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -572,18 +592,22 @@ function renderAdmin() {
     qs("#content").innerHTML = `<div class="panel">没有管理员权限。</div>`;
     return;
   }
-  setTitle("管理员", "账号审核、人员档案、腾讯会议名称匹配、固定会议链接和每周会议档案。");
+  setTitle("管理员", "系统权限、业务角色分类、账号绑定、人员称呼和腾讯会议名称匹配。");
   const users = app.data.users || [];
   const people = app.data.people || [];
+  const businessRoles = app.data.business_roles || [];
   const links = app.data.settings?.meeting_links || [];
   const meetings = app.data.meetings || [];
+  const roleSelectOptions = (selected = []) => businessRoles.map((role) => `<option value="${role.id}" ${selected.includes(role.id) ? "selected" : ""}>${escapeHtml(role.name)}</option>`).join("");
+  const userSelectOptions = (roleId) => users.map((u) => `<option value="${u.id}" ${(u.business_role_ids || []).includes(roleId) ? "selected" : ""}>${escapeHtml(u.username)}${u.person_id ? ` / ${escapeHtml(personName(u.person_id))}` : ""}</option>`).join("");
   qs("#content").innerHTML = `
     <div class="grid">
       <div class="panel">
-        <h2>注册账号</h2>
+        <h2>账号权限 / 人员绑定</h2>
+        <p class="hint">系统权限只控制能不能管理系统；业务角色用于区分合伙人、仓库、财务、技术等现实职责，一个账号可以有多个业务角色。</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>绑定人员</th><th>最后登录</th><th>操作</th></tr></thead>
+            <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
             <tbody>
               ${users.map((u) => `
                 <tr data-user-id="${u.id}">
@@ -591,6 +615,10 @@ function renderAdmin() {
                   <td><select class="user-role compact-input"><option ${u.role === "member" ? "selected" : ""}>member</option><option ${u.role === "manager" ? "selected" : ""}>manager</option><option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
                   <td><select class="user-status compact-input"><option ${u.status === "pending" ? "selected" : ""}>pending</option><option ${u.status === "active" ? "selected" : ""}>active</option><option ${u.status === "disabled" ? "selected" : ""}>disabled</option></select></td>
                   <td><select class="user-person"><option value="">未绑定</option>${people.map((p) => `<option value="${p.id}" ${u.person_id === p.id ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></td>
+                  <td>
+                    <select class="user-business-roles multi-select" multiple size="${Math.min(Math.max(businessRoles.length, 4), 8)}">${roleSelectOptions(u.business_role_ids || [])}</select>
+                    <div class="hint">按住 Ctrl 可多选</div>
+                  </td>
                   <td>${escapeHtml(u.last_login_at || "-")}</td>
                   <td class="split-actions"><button class="plain-btn save-user">保存</button><button class="plain-btn reset-user">重置密码</button></td>
                 </tr>
@@ -606,15 +634,54 @@ function renderAdmin() {
         <div class="form-grid">
           <label>用户名<input name="username" required /></label>
           <label>临时密码<input name="password" placeholder="不填则自动生成" /></label>
-          <label>角色<select name="role"><option>member</option><option>manager</option><option>admin</option></select></label>
+          <label>系统权限<select name="role"><option>member</option><option>manager</option><option>admin</option></select></label>
           <label>状态<select name="status"><option selected>active</option><option>pending</option><option>disabled</option></select></label>
           <label>绑定人员<select name="person_id"><option value="">先不绑定</option>${people.map((p) => `<option value="${p.id}">${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></label>
+          <label class="field-wide">业务角色<select name="business_role_ids" class="multi-select" multiple size="${Math.min(Math.max(businessRoles.length, 4), 8)}">${roleSelectOptions([])}</select></label>
         </div>
         <div class="split-actions" style="margin-top:12px"><button type="submit">创建账号</button><span id="createUserMessage" class="message"></span></div>
       </form>
 
+      <form id="roleForm" class="panel">
+        <h2>业务角色分类</h2>
+        <input type="hidden" name="id" />
+        <div class="form-grid">
+          <label>角色名称<input name="name" placeholder="例如：深圳财务" required /></label>
+          <label>分类<input name="category" placeholder="例如：财务 / 美国运营" /></label>
+          <label class="field-wide">职责说明<textarea name="description"></textarea></label>
+          <label class="field-wide">角色别名 / 会议里常见说法<textarea name="aliases" placeholder="例如：主持人, 周会主持人"></textarea></label>
+        </div>
+        <div class="split-actions" style="margin-top:12px">
+          <button type="submit">保存角色</button>
+          <button type="button" class="plain-btn" id="clearRoleBtn">清空</button>
+          <span id="roleMessage" class="message"></span>
+        </div>
+      </form>
+
+      <div class="panel">
+        <h2>角色绑定账号</h2>
+        <p class="hint">一个业务角色可以绑定多个注册账号；同一个账号也可以出现在多个业务角色里。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>业务角色</th><th>分类</th><th>职责</th><th>会议说法</th><th>绑定账号</th><th>操作</th></tr></thead>
+            <tbody>
+              ${businessRoles.map((role) => `
+                <tr data-role-id="${role.id}">
+                  <td><strong>${escapeHtml(role.name)}</strong></td>
+                  <td>${escapeHtml(role.category || "")}</td>
+                  <td>${escapeHtml(role.description || "")}</td>
+                  <td>${escapeHtml((role.aliases || []).join(", "))}</td>
+                  <td><select class="role-users multi-select" multiple size="${Math.min(Math.max(users.length, 3), 7)}">${userSelectOptions(role.id)}</select></td>
+                  <td class="split-actions"><button class="plain-btn save-role-users">保存绑定</button><button class="plain-btn edit-role" data-id="${role.id}">编辑角色</button>${role.id.startsWith("bizrole_") ? `<button class="plain-btn danger-text delete-role" data-id="${role.id}">删除角色</button>` : ""}</td>
+                </tr>
+              `).join("") || '<tr><td colspan="6" class="muted">暂无业务角色</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <form id="personForm" class="panel">
-        <h2>人员档案 / 腾讯会议名称匹配</h2>
+        <h2>人员档案 / 名称匹配</h2>
         <input type="hidden" name="id" />
         <div class="form-grid">
           <label>显示名称<input name="display_name" required /></label>
@@ -626,7 +693,8 @@ function renderAdmin() {
           <label>参加每周会议<select name="attends_weekly"><option value="true">是</option><option value="false">否</option></select></label>
           <label>需要填周报<select name="needs_weekly_report"><option value="false">否</option><option value="true">是</option></select></label>
           <label>有登录账号<select name="has_login"><option value="false">否</option><option value="true">是</option></select></label>
-          <label class="field-wide">腾讯会议别名，用逗号分隔<textarea name="meeting_aliases"></textarea></label>
+          <label class="field-wide">腾讯会议参会人名，用逗号或换行分隔<textarea name="meeting_aliases" placeholder="例如：Kyle, KYLE, 凯尔"></textarea></label>
+          <label class="field-wide">现实姓名 / 称呼 / 外号，用逗号或换行分隔<textarea name="mention_aliases" placeholder="例如：老陈, 陈总, Kyle, 凯尔"></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">保存人员</button>
@@ -639,7 +707,7 @@ function renderAdmin() {
         <h2>人员列表</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>姓名</th><th>地区</th><th>负责业务</th><th>腾讯会议别名</th><th>操作</th></tr></thead>
+            <thead><tr><th>姓名</th><th>地区</th><th>负责业务</th><th>腾讯会议名</th><th>现实称呼/外号</th><th>绑定账号</th><th>操作</th></tr></thead>
             <tbody>
               ${people.map((p) => `
                 <tr>
@@ -647,6 +715,8 @@ function renderAdmin() {
                   <td>${escapeHtml(p.region)}</td>
                   <td>${escapeHtml(p.business_area)}</td>
                   <td>${escapeHtml((p.meeting_aliases || []).join(", "))}</td>
+                  <td>${escapeHtml((p.mention_aliases || []).join(", "))}</td>
+                  <td>${users.filter((u) => u.person_id === p.id).map((u) => escapeHtml(u.username)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td><button class="plain-btn edit-person" data-id="${p.id}">编辑</button></td>
                 </tr>
               `).join("")}
@@ -729,6 +799,7 @@ function wireAdmin() {
           role: row.querySelector(".user-role").value,
           status: row.querySelector(".user-status").value,
           person_id: row.querySelector(".user-person").value,
+          business_role_ids: selectedValues(row.querySelector(".user-business-roles")),
         },
       });
       await refresh();
@@ -749,6 +820,7 @@ function wireAdmin() {
   qs("#createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+    body.business_role_ids = selectedValues(event.currentTarget.elements.business_role_ids);
     try {
       const res = await api("/api/admin/create-user", { method: "POST", body });
       await refresh();
@@ -758,6 +830,11 @@ function wireAdmin() {
       showMessage("#createUserMessage", err.message);
     }
   });
+  qs("#roleForm").addEventListener("submit", saveBusinessRole);
+  qs("#clearRoleBtn").addEventListener("click", () => qs("#roleForm").reset());
+  document.querySelectorAll(".save-role-users").forEach((btn) => btn.addEventListener("click", saveRoleUsers));
+  document.querySelectorAll(".edit-role").forEach((btn) => btn.addEventListener("click", () => fillBusinessRole(btn.dataset.id)));
+  document.querySelectorAll(".delete-role").forEach((btn) => btn.addEventListener("click", () => deleteBusinessRole(btn.dataset.id)));
   qs("#personForm").addEventListener("submit", savePerson);
   qs("#clearPersonBtn").addEventListener("click", () => qs("#personForm").reset());
   document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => fillPerson(btn.dataset.id)));
@@ -765,6 +842,57 @@ function wireAdmin() {
   qs("#meetingForm").addEventListener("submit", saveMeeting);
   qs("#clearMeetingBtn").addEventListener("click", () => qs("#meetingForm").reset());
   document.querySelectorAll(".edit-meeting").forEach((btn) => btn.addEventListener("click", () => fillMeeting(btn.dataset.id)));
+}
+
+async function saveBusinessRole(event) {
+  event.preventDefault();
+  const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+  body.aliases = String(body.aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
+  try {
+    await api("/api/admin/save-business-role", { method: "POST", body });
+    await refresh();
+    renderAdmin();
+  } catch (err) {
+    showMessage("#roleMessage", err.message);
+  }
+}
+
+function fillBusinessRole(id) {
+  const role = (app.data.business_roles || []).find((item) => item.id === id);
+  if (!role) return;
+  const form = qs("#roleForm");
+  for (const [key, value] of Object.entries(role)) {
+    if (form.elements[key]) form.elements[key].value = Array.isArray(value) ? value.join(", ") : value || "";
+  }
+  window.scrollTo({ top: form.offsetTop - 20, behavior: "smooth" });
+}
+
+async function deleteBusinessRole(id) {
+  if (!confirm("确定删除这个业务角色？账号不会删除，只会解除这个角色绑定。")) return;
+  try {
+    await api("/api/admin/delete-business-role", { method: "POST", body: { id } });
+    await refresh();
+    renderAdmin();
+  } catch (err) {
+    showMessage("#roleMessage", err.message);
+  }
+}
+
+async function saveRoleUsers(event) {
+  const row = event.currentTarget.closest("tr");
+  try {
+    await api("/api/admin/save-role-users", {
+      method: "POST",
+      body: {
+        role_id: row.dataset.roleId,
+        user_ids: selectedValues(row.querySelector(".role-users")),
+      },
+    });
+    await refresh();
+    showMessage("#roleMessage", "角色绑定已保存", true);
+  } catch (err) {
+    showMessage("#roleMessage", err.message);
+  }
 }
 
 async function savePerson(event) {
@@ -775,6 +903,7 @@ async function savePerson(event) {
   body.needs_weekly_report = body.needs_weekly_report === "true";
   body.has_login = body.has_login === "true";
   body.meeting_aliases = String(body.meeting_aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
+  body.mention_aliases = String(body.mention_aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
   try {
     await api("/api/admin/save-person", { method: "POST", body });
     await refresh();
