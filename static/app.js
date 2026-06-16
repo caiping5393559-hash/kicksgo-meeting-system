@@ -833,7 +833,7 @@ function renderAdmin() {
 
       <div class="panel">
         <h2>业务角色职责 / 账号绑定</h2>
-        <p class="hint">系统已有默认业务角色和默认职责；可以直接修改职责、会议说法，并勾选绑定账号。</p>
+        <p class="hint">系统已有默认业务角色和默认职责；绑定账号支持多选，直接勾选多个账号后保存。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>业务角色</th><th>职责（可修改）</th><th>会议说法（可修改）</th><th>绑定账号</th><th>操作</th></tr></thead>
@@ -844,7 +844,10 @@ function renderAdmin() {
                   <td><textarea class="role-description compact-textarea">${escapeHtml(role.description || "")}</textarea></td>
                   <td><textarea class="role-aliases compact-textarea" placeholder="例如：主持人, 周会主持人">${escapeHtml((role.aliases || []).join(", "))}</textarea></td>
                   <td><div class="checkbox-grid user-checkboxes">${userCheckboxes(role.id)}</div></td>
-                  <td><button class="plain-btn save-role-users">保存职责和绑定</button></td>
+                  <td class="role-action-cell">
+                    <button type="button" class="plain-btn save-role-users">保存职责和绑定</button>
+                    <span class="inline-status role-row-message"></span>
+                  </td>
                 </tr>
               `).join("") || '<tr><td colspan="5" class="muted">暂无业务角色</td></tr>'}
             </tbody>
@@ -1041,14 +1044,25 @@ function wireAdmin() {
 }
 
 async function saveRoleUsers(event) {
+  event.preventDefault();
+  const button = event.currentTarget;
   const row = event.currentTarget.closest("tr");
   const role = (app.data.business_roles || []).find((item) => item.id === row.dataset.roleId);
   if (!role) return;
+  const status = row.querySelector(".role-row-message");
+  const originalText = button.textContent;
+  const userIds = checkedValues(row, "user_ids");
   const aliases = String(row.querySelector(".role-aliases")?.value || "")
     .split(/[,，\n]/)
     .map((value) => value.trim())
     .filter(Boolean);
   try {
+    button.disabled = true;
+    button.textContent = "保存中...";
+    if (status) {
+      status.textContent = `正在保存，已勾选 ${userIds.length} 个账号`;
+      status.className = "inline-status role-row-message";
+    }
     await api("/api/admin/save-business-role", {
       method: "POST",
       body: {
@@ -1062,14 +1076,24 @@ async function saveRoleUsers(event) {
       method: "POST",
       body: {
         role_id: row.dataset.roleId,
-        user_ids: checkedValues(row, "user_ids"),
+        user_ids: userIds,
       },
     });
     await refresh();
-    renderAdmin();
-    setTimeout(() => showMessage("#roleMessage", "业务角色职责和账号绑定已保存", true), 0);
+    if (status) {
+      status.textContent = `已保存，当前绑定 ${userIds.length} 个账号`;
+      status.className = "inline-status role-row-message success";
+    }
+    showMessage("#roleMessage", `已保存：${role.name}，绑定 ${userIds.length} 个账号`, true);
   } catch (err) {
+    if (status) {
+      status.textContent = err.message;
+      status.className = "inline-status role-row-message error";
+    }
     showMessage("#roleMessage", err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
   }
 }
 

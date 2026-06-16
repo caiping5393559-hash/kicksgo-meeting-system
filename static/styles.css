@@ -561,6 +561,18 @@ tr:last-child td {
   line-height: 1.5;
 }
 
+.role-action-cell {
+  min-width: 150px;
+}
+
+.inline-status {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .multi-select {
   min-width: 180px;
   min-height: 106px;
