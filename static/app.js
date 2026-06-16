@@ -11,6 +11,7 @@ const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
 
 const pages = [
   ["dashboard", "周会首页"],
+  ["meetings", "会议列表"],
   ["report", "美国代运营周报"],
   ["notes", "会前备注"],
   ["transcripts", "会议文字记录"],
@@ -312,6 +313,7 @@ function renderPage() {
   setTitle(title, "");
   if (app.page === "report" && !canViewAgencyReport()) app.page = "dashboard";
   if (app.page === "dashboard") renderDashboard();
+  if (app.page === "meetings") renderMeetings();
   if (app.page === "report") renderReport();
   if (app.page === "notes") renderNotes();
   if (app.page === "transcripts") renderTranscripts();
@@ -388,7 +390,7 @@ function renderDashboard() {
             ${links.map((link) => `
               <div class="meeting-link">
                 <strong>${escapeHtml(link.title)}</strong>
-                <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">管理员未填写链接</span>'}</div>
+                <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
                 <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
               </div>
             `).join("")}
@@ -419,6 +421,68 @@ function renderDashboard() {
               <span>${escapeHtml(row[2])}</span>
             </div>
           `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMeetings() {
+  const meeting = currentMeeting();
+  const links = app.data.settings?.meeting_links || [];
+  const meetings = [...(app.data.meetings || [])];
+  setTitle("会议列表", "所有人查看固定腾讯会议链接、当前会议和每周会议档案。");
+  qs("#content").innerHTML = `
+    <div class="grid">
+      <div class="panel">
+        <h2>固定腾讯会议链接</h2>
+        <div class="link-list">
+          ${links.map((link) => `
+            <div class="meeting-link">
+              <strong>${escapeHtml(link.title)}</strong>
+              <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
+              <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
+              <div class="muted">主持人：${escapeHtml(link.host || "-")}　备注：${escapeHtml(link.notes || "-")}</div>
+            </div>
+          `).join("") || '<div class="muted">暂无固定会议链接</div>'}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">
+          <div>
+            <h2>当前 / 下次会议</h2>
+            <p class="muted">${escapeHtml(meeting?.title || "暂无会议")}</p>
+          </div>
+          <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
+        </div>
+        <div class="metric-row">
+          <div class="metric"><span>美国时间</span><strong>${escapeHtml(`${meeting?.us_date || "-"} ${meeting?.us_time || ""}`)}</strong></div>
+          <div class="metric"><span>中国时间</span><strong>${escapeHtml(`${meeting?.cn_date || "-"} ${meeting?.cn_time || ""}`)}</strong></div>
+          <div class="metric"><span>美国代运营周报</span><strong>${meeting?.kyle_report_required ? "必填" : "不强制"}</strong></div>
+          <div class="metric"><span>会议状态</span><strong>${escapeHtml(meeting?.status || "-")}</strong></div>
+        </div>
+        <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
+      </div>
+
+      <div class="panel">
+        <h2>每周会议档案</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营周报</th><th>备注</th></tr></thead>
+            <tbody>
+              ${meetings.map((m) => `
+                <tr>
+                  <td>${escapeHtml(m.title)}</td>
+                  <td>${escapeHtml(m.status)}</td>
+                  <td>${escapeHtml(`${m.us_date || ""} ${m.us_time || ""}`)}</td>
+                  <td>${escapeHtml(`${m.cn_date || ""} ${m.cn_time || ""}`)}</td>
+                  <td>${m.kyle_report_required ? "必填" : "不强制"}</td>
+                  <td>${escapeHtml(m.notes || "")}</td>
+                </tr>
+              `).join("") || '<tr><td colspan="6" class="muted">暂无会议档案</td></tr>'}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -780,8 +844,6 @@ function renderAdmin() {
   const users = app.data.users || [];
   const people = app.data.people || [];
   const businessRoles = app.data.business_roles || [];
-  const links = app.data.settings?.meeting_links || [];
-  const meetings = app.data.meetings || [];
   const accountPersonIds = new Set(users.map((u) => u.person_id).filter(Boolean));
   const unboundPeople = people.filter((p) => !accountPersonIds.has(p.id));
   const roleCheckboxes = (selected = []) => checkboxOptions(businessRoles, selected, "business_role_ids", "暂无业务角色");
@@ -886,64 +948,6 @@ function renderAdmin() {
         <div id="roleMessage" class="message"></div>
       </div>
 
-      <form id="linksForm" class="panel">
-        <h2>固定腾讯会议链接</h2>
-        <div class="grid two">
-          ${links.map((link, index) => `
-            <div class="panel">
-              <input type="hidden" name="id_${index}" value="${escapeHtml(link.id)}" />
-              <input type="hidden" name="part_${index}" value="${escapeHtml(link.part)}" />
-              <label>标题<input name="title_${index}" value="${escapeHtml(link.title)}" /></label>
-              <label>链接<input name="url_${index}" value="${escapeHtml(link.url || "")}" /></label>
-              <label>会议号<input name="meeting_id_${index}" value="${escapeHtml(link.meeting_id || "")}" /></label>
-              <label>密码<input name="password_${index}" value="${escapeHtml(link.password || "")}" /></label>
-              <label>主持人<input name="host_${index}" value="${escapeHtml(link.host || "")}" /></label>
-              <label>备注<textarea name="notes_${index}">${escapeHtml(link.notes || "")}</textarea></label>
-            </div>
-          `).join("")}
-        </div>
-        <div class="split-actions" style="margin-top:12px"><button type="submit">保存会议链接</button><span id="linksMessage" class="message"></span></div>
-      </form>
-
-      <form id="meetingForm" class="panel">
-        <h2>每周会议档案</h2>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>标题<input name="title" required /></label>
-          <label>状态<select name="status"><option>待开会</option><option>已开会</option><option>已归档</option></select></label>
-          <label>美国日期<input name="us_date" type="date" /></label>
-          <label>美国时间<input name="us_time" /></label>
-          <label>中国日期<input name="cn_date" type="date" /></label>
-          <label>中国时间<input name="cn_time" /></label>
-          <label>美国代运营周报必填<select name="kyle_report_required"><option value="false">否</option><option value="true">是</option></select></label>
-          <label class="field-wide">周报截止说明<input name="report_due_note" /></label>
-          <label class="field-wide">备注<textarea name="notes"></textarea></label>
-        </div>
-        <div class="split-actions" style="margin-top:12px">
-          <button type="submit">保存会议</button>
-          <button type="button" class="plain-btn" id="clearMeetingBtn">清空</button>
-          <span id="meetingMessage" class="message"></span>
-        </div>
-      </form>
-
-      <div class="panel">
-        <h2>会议列表</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营周报</th><th>操作</th></tr></thead>
-            <tbody>
-              ${meetings.map((m) => `
-                <tr>
-                  <td>${escapeHtml(m.title)}</td><td>${escapeHtml(m.status)}</td>
-                  <td>${escapeHtml(`${m.us_date || ""} ${m.us_time || ""}`)}</td><td>${escapeHtml(`${m.cn_date || ""} ${m.cn_time || ""}`)}</td>
-                  <td>${m.kyle_report_required ? "必填" : "不强制"}</td>
-                  <td><button class="plain-btn edit-meeting" data-id="${m.id}">编辑</button></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
       <div id="personModal" class="modal-backdrop hidden" aria-hidden="true">
         <div class="modal-panel">
           <form id="personModalForm">
@@ -1056,10 +1060,6 @@ function wireAdmin() {
     if (event.target.id === "personModal") closePersonModal();
   });
   document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => openPersonModal(btn.dataset.id)));
-  qs("#linksForm").addEventListener("submit", saveLinks);
-  qs("#meetingForm").addEventListener("submit", saveMeeting);
-  qs("#clearMeetingBtn").addEventListener("click", () => qs("#meetingForm").reset());
-  document.querySelectorAll(".edit-meeting").forEach((btn) => btn.addEventListener("click", () => fillMeeting(btn.dataset.id)));
 }
 
 async function saveRoleUsers(event) {
@@ -1225,52 +1225,6 @@ function closePersonModal() {
   modal.classList.add("hidden");
   modal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
-}
-
-async function saveLinks(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const current = app.data.settings.meeting_links || [];
-  const meeting_links = current.map((link, index) => ({
-    id: form.get(`id_${index}`) || link.id,
-    part: form.get(`part_${index}`) || link.part,
-    title: form.get(`title_${index}`) || "",
-    url: form.get(`url_${index}`) || "",
-    meeting_id: form.get(`meeting_id_${index}`) || "",
-    password: form.get(`password_${index}`) || "",
-    host: form.get(`host_${index}`) || "",
-    notes: form.get(`notes_${index}`) || "",
-  }));
-  try {
-    await api("/api/admin/save-links", { method: "POST", body: { meeting_links } });
-    await refresh();
-    showMessage("#linksMessage", "已保存会议链接", true);
-  } catch (err) {
-    showMessage("#linksMessage", err.message);
-  }
-}
-
-async function saveMeeting(event) {
-  event.preventDefault();
-  const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-  body.kyle_report_required = body.kyle_report_required === "true";
-  try {
-    await api("/api/admin/save-meeting", { method: "POST", body });
-    await refresh();
-    renderAdmin();
-  } catch (err) {
-    showMessage("#meetingMessage", err.message);
-  }
-}
-
-function fillMeeting(id) {
-  const meeting = (app.data.meetings || []).find((m) => m.id === id);
-  if (!meeting) return;
-  const form = qs("#meetingForm");
-  for (const [key, value] of Object.entries(meeting)) {
-    if (form.elements[key]) form.elements[key].value = typeof value === "boolean" ? String(value) : value || "";
-  }
-  window.scrollTo({ top: form.offsetTop - 20, behavior: "smooth" });
 }
 
 document.addEventListener("click", (event) => {
