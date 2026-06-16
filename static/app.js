@@ -5,6 +5,7 @@ const app = {
   publicRoles: [],
   storage: null,
   page: "dashboard",
+  pendingTranscriptFile: null,
 };
 
 const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
@@ -131,6 +132,19 @@ async function api(path, options = {}) {
   return data;
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+    reader.onerror = () => reject(reader.error || new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function isDocxFile(file) {
+  return /\.docx$/i.test(file?.name || "");
+}
+
 function personName(id) {
   const person = (app.data?.people || []).find((p) => p.id === id);
   return person ? person.display_name || person.real_name || person.chinese_name || person.english_name || id : id || "";
@@ -160,6 +174,15 @@ function canViewAgencyReport() {
 
 function canManageActions() {
   return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID);
+}
+
+function isAgencyOnlyUser(user = app.user) {
+  const roleIds = (user?.business_role_ids || []).filter(Boolean);
+  return roleIds.includes(AGENCY_OPS_ROLE_ID) && !roleIds.some((roleId) => roleId !== AGENCY_OPS_ROLE_ID);
+}
+
+function canViewTranscripts() {
+  return canManageActions() || !isAgencyOnlyUser();
 }
 
 function userDisplayName(user) {
@@ -388,6 +411,21 @@ function previousMeeting() {
   return meetings[index - 1] || meetings.find((m) => m.status === "已开会") || null;
 }
 
+function meetingTimestamp(meeting) {
+  if (!meeting?.us_date) return 0;
+  const value = new Date(`${meeting.us_date}T${meeting.us_time || "23:59"}:00`).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
+
+function lastOccurredMeeting() {
+  const now = Date.now();
+  const meetings = [...(app.data?.meetings || [])];
+  const past = meetings
+    .filter((meeting) => meeting.status === "已开会" || (meetingTimestamp(meeting) && meetingTimestamp(meeting) <= now))
+    .sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  return past[0] || previousMeeting() || currentMeeting();
+}
+
 function meetingStarted(meeting) {
   if (!meeting) return false;
   if (meeting.status === "待开会") return false;
@@ -400,6 +438,44 @@ function meetingStarted(meeting) {
 function transcriptMetricText(uploaded, meeting) {
   if (uploaded) return "已上传";
   return meetingStarted(meeting) ? "待上传" : "会后上传";
+}
+
+function transcriptRecordsFor(meetingId, part) {
+  return (app.data.transcript_uploads || [])
+    .filter((record) => record.meeting_id === meetingId && record.part === part)
+    .sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")));
+}
+
+function transcriptPartStatusHtml(meetingId, part) {
+  const records = transcriptRecordsFor(meetingId, part);
+  if (!records.length) return '<span class="tag red">未上传</span>';
+  const latest = records[0];
+  const status = latest.parse_status === "failed"
+    ? '<span class="tag red">需重新上传</span>'
+    : '<span class="tag green">已上传</span>';
+  return `
+    ${status}
+    <button class="plain-btn view-transcript" data-id="${escapeHtml(latest.id)}">查看最新</button>
+    <div class="muted">${escapeHtml(latest.original_filename || latest.title || "")}</div>
+    ${latest.parse_message ? `<div class="message error">${escapeHtml(latest.parse_message)}</div>` : ""}
+  `;
+}
+
+function meetingHistoryRows() {
+  const meetings = [...(app.data.meetings || [])].sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  return meetings.map((meeting) => {
+    const records = (app.data.transcript_uploads || []).filter((record) => record.meeting_id === meeting.id);
+    const latest = [...records].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")))[0];
+    return `
+      <tr>
+        <td>${escapeHtml(meeting.title || meeting.name || meeting.id)}</td>
+        <td>${escapeHtml([meeting.us_date, meeting.us_time].filter(Boolean).join(" "))}</td>
+        <td>${transcriptPartStatusHtml(meeting.id, "part1")}</td>
+        <td>${transcriptPartStatusHtml(meeting.id, "part2")}</td>
+        <td>${records.length ? `${records.length} 次 / ${escapeHtml(latest?.uploaded_at || "")}` : '<span class="muted">未上传</span>'}</td>
+      </tr>
+    `;
+  }).join("") || '<tr><td colspan="5" class="muted">暂无会议</td></tr>';
 }
 
 function setTitle(title, subtitle) {
@@ -482,6 +558,7 @@ function renderAppShell() {
   qs("#appView").classList.remove("hidden");
   const visiblePages = pages.filter(([key]) => {
     if (key === "admin") return app.user?.role === "admin";
+    if (key === "transcripts") return canViewTranscripts();
     return true;
   });
   qs("#nav").innerHTML = visiblePages
@@ -856,9 +933,14 @@ async function saveNote(event) {
 }
 
 function renderTranscripts() {
-  const meeting = currentMeeting();
+  if (!canViewTranscripts()) {
+    setTitle("会议文字记录", "美国代运营账号不能查看会议文字记录归档。");
+    qs("#content").innerHTML = `<div class="panel"><h2>无权限查看</h2><p class="muted">美国代运营账号只能查看已生成的第一部分会议纪要，不能查看上传的原始会议文字记录。</p></div>`;
+    return;
+  }
+  const uploadMeeting = lastOccurredMeeting();
   const records = app.data.transcript_uploads || [];
-  const canUpload = ["admin", "manager"].includes(app.user.role);
+  const canUpload = canManageActions();
   const subtitle = canUpload
     ? "上传腾讯会议导出的文字记录；如果文字里写到第一部分凯尔/代运营结束，系统会自动拆成两段保存。"
     : "查看当前账号有权限访问的会议纪要。美国代运营角色只能看到第一部分。";
@@ -869,10 +951,10 @@ function renderTranscripts() {
       <form id="transcriptForm" class="panel">
         <h2>上传腾讯会议文字记录</h2>
         <div class="form-grid two">
-          <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
+          <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id)}</select></label>
           <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营周报</option><option value="part2">Part 2：内部经营复盘</option></select></label>
           <label>文件名<input name="filename" /></label>
-          <label>选择文本文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,text/plain" /></label>
+          <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
           <label class="field-wide">文字记录内容<textarea name="content" required></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
@@ -881,6 +963,16 @@ function renderTranscripts() {
         </div>
         <p class="hint" style="margin-top:10px">提示：可以上传完整会议文字；出现“第一部分凯尔的结束了”等断点时，会自动把前面保存为 Part 1，后面保存为 Part 2。</p>
       </form>` : ""}
+      <div class="panel">
+        <h2>每周会议文字记录归档</h2>
+        <p class="muted">默认上传到最近一次已经开过的周会；这里可以查看每次会议 Part 1 / Part 2 是否已上传。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>会议</th><th>美国时间</th><th>Part 1：美国代运营</th><th>Part 2：内部复盘</th><th>上传状态</th></tr></thead>
+            <tbody>${meetingHistoryRows()}</tbody>
+          </table>
+        </div>
+      </div>
       <div class="panel">
         <h2>${canUpload ? "已上传记录" : "可查看会议纪要"}</h2>
         <div class="table-wrap">
@@ -912,7 +1004,13 @@ function renderTranscripts() {
     const file = event.target.files?.[0];
     if (!file) return;
     qs('#transcriptForm input[name="filename"]').value = file.name;
-    qs('#transcriptForm textarea[name="content"]').value = await file.text();
+    if (isDocxFile(file)) {
+      app.pendingTranscriptFile = { name: file.name, base64: await fileToBase64(file) };
+      qs('#transcriptForm textarea[name="content"]').value = "已选择 Word 会议文字记录文件，提交后系统会自动提取文字。";
+    } else {
+      app.pendingTranscriptFile = null;
+      qs('#transcriptForm textarea[name="content"]').value = await file.text();
+    }
   });
   qs("#transcriptForm")?.addEventListener("submit", saveTranscript);
   document.querySelectorAll(".view-transcript").forEach((btn) => {
@@ -925,8 +1023,12 @@ async function saveTranscript(event) {
   const done = setBusy(submitButton(event.currentTarget), "上传中...");
   showMessage("#transcriptMessage", "上传保存中...", true);
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+  if (app.pendingTranscriptFile?.base64 && app.pendingTranscriptFile.name === body.filename) {
+    body.file_base64 = app.pendingTranscriptFile.base64;
+  }
   try {
     const res = await api("/api/transcripts/upload", { method: "POST", body });
+    app.pendingTranscriptFile = null;
     (res.records || []).forEach((record) => upsertById("transcript_uploads", record));
     (res.action_drafts || []).forEach((draft) => upsertById("action_drafts", draft));
     const draftItemCount = (res.action_drafts || []).reduce((sum, draft) => sum + (draft.items || []).length, 0);

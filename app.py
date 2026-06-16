@@ -4,18 +4,21 @@ import base64
 import copy
 import hashlib
 import hmac
+import io
 import json
 import mimetypes
 import os
 import re
 import secrets
 import traceback
+import zipfile
 from datetime import datetime, timezone
 from http import cookies
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree
 
 
 BASE = Path(__file__).resolve().parent
@@ -95,6 +98,64 @@ def normalize_name(value: str) -> str:
     value = str(value or "").strip().lower()
     value = re.sub(r"[\s\-_()（）【】\[\].,，。:：]+", "", value)
     return value
+
+
+def extract_docx_text(blob: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            xml = archive.read("word/document.xml")
+    except Exception as exc:
+        raise ValueError("Word 文件无法读取，请确认上传的是腾讯会议导出的 .docx 文字记录。") from exc
+    try:
+        root = ElementTree.fromstring(xml)
+    except Exception as exc:
+        raise ValueError("Word 文件内容无法解析，请重新导出会议文字记录后再上传。") from exc
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{ns}p"):
+        parts: list[str] = []
+        for node in paragraph.iter():
+            if node.tag == f"{ns}t" and node.text:
+                parts.append(node.text)
+            elif node.tag == f"{ns}tab":
+                parts.append("\t")
+            elif node.tag in {f"{ns}br", f"{ns}cr"}:
+                parts.append("\n")
+        line = "".join(parts).strip()
+        if line:
+            paragraphs.append(line)
+    text = "\n".join(paragraphs).strip()
+    if len(text) < 10:
+        raise ValueError("Word 文件里没有读取到足够的会议文字内容。")
+    return text
+
+
+def looks_like_binary_text(content: str) -> bool:
+    if not content:
+        return False
+    sample = content[:4000]
+    replacement_count = sample.count("\ufffd")
+    control_count = sum(1 for char in sample if ord(char) < 32 and char not in "\r\n\t")
+    return sample.startswith("PK") or replacement_count > max(10, len(sample) * 0.02) or control_count > max(10, len(sample) * 0.01)
+
+
+def uploaded_transcript_content(payload: dict[str, Any], filename: str) -> str:
+    file_base64 = str(payload.get("file_base64") or "")
+    if file_base64:
+        if "," in file_base64[:80]:
+            file_base64 = file_base64.split(",", 1)[1]
+        try:
+            blob = base64.b64decode(file_base64)
+        except Exception as exc:
+            raise ValueError("上传文件内容无法读取，请重新选择文件。") from exc
+        lower_name = filename.lower()
+        if lower_name.endswith(".docx") or blob.startswith(b"PK\x03\x04"):
+            return extract_docx_text(blob)
+        return blob.decode("utf-8-sig", errors="replace").strip()
+    content = str(payload.get("content") or "")
+    if looks_like_binary_text(content):
+        raise ValueError("当前内容像 Word 文件乱码，请重新选择原始 .docx 文件上传，不要把 Word 文件当普通文本上传。")
+    return content
 
 
 def split_aliases(value: Any) -> list[str]:
@@ -729,10 +790,19 @@ def can_manage_actions(user: dict[str, Any]) -> bool:
     return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID)
 
 
+def is_agency_only_user(user: dict[str, Any]) -> bool:
+    role_ids = [str(role_id) for role_id in (user.get("business_role_ids") or []) if role_id]
+    return AGENCY_OPS_ROLE_ID in role_ids and not any(role_id != AGENCY_OPS_ROLE_ID for role_id in role_ids)
+
+
+def can_access_transcripts(user: dict[str, Any]) -> bool:
+    return can_manage_actions(user) or not is_agency_only_user(user)
+
+
 def can_read_transcript_record(user: dict[str, Any], record: dict[str, Any]) -> bool:
     if can_manage_actions(user):
         return True
-    return record.get("part") == "part1" and user_has_business_role(user, AGENCY_OPS_ROLE_ID)
+    return can_access_transcripts(user)
 
 
 def audit(state: dict[str, Any], user: dict[str, Any] | None, action: str, detail: dict[str, Any] | None = None) -> None:
@@ -1588,11 +1658,13 @@ class AppHandler(BaseHTTPRequestHandler):
             record for record in state.get("transcript_uploads", [])
             if can_read_transcript_record(user, record)
         ]
+        if can_access_transcripts(user):
+            visible_person_ids = {p.get("id") for p in state.get("people", []) if p.get("id")}
         return {
             "users": [
                 sanitize_user(account)
                 for account in state.get("users", [])
-                if account.get("id") == user.get("id") or account.get("person_id") in agency_person_ids
+                if can_access_transcripts(user) or account.get("id") == user.get("id") or account.get("person_id") in agency_person_ids
             ],
             "people": [p for p in state.get("people", []) if p.get("id") in visible_person_ids],
             "business_roles": state.get("business_roles", []),
@@ -1813,12 +1885,16 @@ class AppHandler(BaseHTTPRequestHandler):
         if not can_manage_actions(user):
             self.send_json({"ok": False, "error": "只有管理员或会议主持人可以上传会议文字记录"}, 403)
             return
-        content = str(payload.get("content") or "")
+        filename = str(payload.get("filename") or "")
+        try:
+            content = uploaded_transcript_content(payload, filename)
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if len(content.strip()) < 10:
             self.send_json({"ok": False, "error": "文字记录内容太短"}, 400)
             return
         meeting_id = str(payload.get("meeting_id") or "")
-        filename = str(payload.get("filename") or "")
         selected_part = str(payload.get("part") or "part1")
         part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
         pieces: list[tuple[str, str]] = []
