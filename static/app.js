@@ -107,6 +107,10 @@ function personName(id) {
   return person ? person.display_name || person.real_name || person.chinese_name || person.english_name || id : id || "";
 }
 
+function personById(id) {
+  return (app.data?.people || []).find((p) => p.id === id) || null;
+}
+
 function businessRoleName(id) {
   const role = (app.data?.business_roles || []).find((r) => r.id === id);
   return role ? role.name || id : id || "";
@@ -772,13 +776,25 @@ function renderAdmin() {
     qs("#content").innerHTML = `<div class="panel">没有管理员权限。</div>`;
     return;
   }
-  setTitle("管理员", "系统权限、业务角色职责、账号绑定、人员称呼和腾讯会议名称匹配。");
+  setTitle("管理员", "系统权限、人员资料、业务角色职责和腾讯会议名称匹配。");
   const users = app.data.users || [];
   const people = app.data.people || [];
   const businessRoles = app.data.business_roles || [];
   const links = app.data.settings?.meeting_links || [];
   const meetings = app.data.meetings || [];
+  const accountPersonIds = new Set(users.map((u) => u.person_id).filter(Boolean));
+  const unboundPeople = people.filter((p) => !accountPersonIds.has(p.id));
   const roleCheckboxes = (selected = []) => checkboxOptions(businessRoles, selected, "business_role_ids", "暂无业务角色");
+  const personInfo = (person) => person ? `
+    <div class="person-inline">
+      <strong>${escapeHtml(person.display_name || person.real_name || person.chinese_name || person.english_name || person.id)}</strong>
+      <span>${escapeHtml(person.region || "地区未填")}</span>
+      <span>${escapeHtml(person.business_area || "负责业务未填")}</span>
+      <span>腾讯会议名：${escapeHtml((person.meeting_aliases || []).join(", ") || "-")}</span>
+      <span>现实称呼：${escapeHtml((person.mention_aliases || []).join(", ") || "-")}</span>
+      <button type="button" class="plain-btn compact-action edit-person" data-id="${person.id}">编辑人员</button>
+    </div>
+  ` : '<span class="muted">未绑定人员</span>';
   const userCheckboxes = (roleId) => checkboxOptions(
     users.map((u) => ({
       id: u.id,
@@ -792,10 +808,10 @@ function renderAdmin() {
     <div class="grid">
       <div class="panel">
         <h2>账号权限 / 人员绑定</h2>
-        <p class="hint">系统权限只控制能不能管理系统；业务角色用于区分合伙人、仓库、财务、技术等现实职责，一个账号可以勾选多个业务角色。</p>
+        <p class="hint">账号权限、绑定人员和人员资料集中在这里管理；没有账号的人员也在本模块底部维护。</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
+            <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>人员资料</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
             <tbody>
               ${users.map((u) => `
                 <tr data-user-id="${u.id}">
@@ -803,6 +819,7 @@ function renderAdmin() {
                   <td><select class="user-role compact-input"><option ${u.role === "member" ? "selected" : ""}>member</option><option ${u.role === "manager" ? "selected" : ""}>manager</option><option ${u.role === "admin" ? "selected" : ""}>admin</option></select></td>
                   <td><select class="user-status compact-input"><option ${u.status === "pending" ? "selected" : ""}>pending</option><option ${u.status === "active" ? "selected" : ""}>active</option><option ${u.status === "disabled" ? "selected" : ""}>disabled</option></select></td>
                   <td><select class="user-person"><option value="">未绑定</option>${people.map((p) => `<option value="${p.id}" ${u.person_id === p.id ? "selected" : ""}>${escapeHtml(p.display_name || p.real_name)}</option>`).join("")}</select></td>
+                  <td>${personInfo(personById(u.person_id))}</td>
                   <td><div class="checkbox-grid role-checkboxes">${roleCheckboxes(u.business_role_ids || [])}</div></td>
                   <td>${escapeHtml(u.last_login_at || "-")}</td>
                   <td class="split-actions">
@@ -815,6 +832,29 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
+        ${unboundPeople.length ? `
+          <div class="subsection">
+            <h3>未绑定账号人员</h3>
+            <p class="hint">这些人员目前没有登录账号，但仍会用于会议文字匹配和人员称呼识别。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>姓名</th><th>地区</th><th>负责业务</th><th>腾讯会议名</th><th>现实称呼/外号</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${unboundPeople.map((p) => `
+                    <tr>
+                      <td>${escapeHtml(p.display_name || p.real_name)}</td>
+                      <td>${escapeHtml(p.region || "")}</td>
+                      <td>${escapeHtml(p.business_area || "")}</td>
+                      <td>${escapeHtml((p.meeting_aliases || []).join(", "))}</td>
+                      <td>${escapeHtml((p.mention_aliases || []).join(", "))}</td>
+                      <td><button type="button" class="plain-btn edit-person" data-id="${p.id}">编辑人员</button></td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : ""}
         <div id="adminUserMessage" class="message"></div>
       </div>
 
@@ -888,28 +928,6 @@ function renderAdmin() {
           <span id="personMessage" class="message"></span>
         </div>
       </form>
-
-      <div class="panel">
-        <h2>人员列表</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>姓名</th><th>地区</th><th>负责业务</th><th>腾讯会议名</th><th>现实称呼/外号</th><th>绑定账号</th><th>操作</th></tr></thead>
-            <tbody>
-              ${people.map((p) => `
-                <tr>
-                  <td>${escapeHtml(p.display_name || p.real_name)}</td>
-                  <td>${escapeHtml(p.region)}</td>
-                  <td>${escapeHtml(p.business_area)}</td>
-                  <td>${escapeHtml((p.meeting_aliases || []).join(", "))}</td>
-                  <td>${escapeHtml((p.mention_aliases || []).join(", "))}</td>
-                  <td>${users.filter((u) => u.person_id === p.id).map((u) => escapeHtml(u.username)).join("<br>") || '<span class="muted">-</span>'}</td>
-                  <td><button class="plain-btn edit-person" data-id="${p.id}">编辑</button></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       <form id="linksForm" class="panel">
         <h2>固定腾讯会议链接</h2>
