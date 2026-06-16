@@ -1934,11 +1934,31 @@ class AppHandler(BaseHTTPRequestHandler):
         if not can_manage_actions(user):
             self.send_json({"ok": False, "error": "只有管理员或会议主持人可以修改行动项初稿"}, 403)
             return
-        draft = find_action_draft(state, str(payload.get("id") or ""))
+        draft_id = str(payload.get("id") or "")
+        draft = find_action_draft(state, draft_id) if draft_id else None
         if not draft:
-            self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
-            return
+            if draft_id:
+                self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
+                return
+            draft = {
+                "id": new_id("draft"),
+                "meeting_id": str(payload.get("meeting_id") or ""),
+                "transcript_id": "",
+                "part": str(payload.get("part") or "part2"),
+                "title": "新增会议行动项初稿",
+                "source_filename": "手动新增",
+                "status": "待管理员确认",
+                "items": [],
+                "chat": [],
+                "created_at": now_iso(),
+                "created_by": user.get("id"),
+                "updated_at": now_iso(),
+                "updated_by": user.get("id"),
+            }
+            state.setdefault("action_drafts", []).insert(0, draft)
         part = str(payload.get("part") or draft.get("part") or "part2")
+        if payload.get("meeting_id"):
+            draft["meeting_id"] = str(payload.get("meeting_id") or "")
         items = payload.get("items") or []
         if not isinstance(items, list):
             self.send_json({"ok": False, "error": "行动项初稿格式错误"}, 400)

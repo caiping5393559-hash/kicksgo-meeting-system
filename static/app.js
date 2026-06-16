@@ -1089,32 +1089,35 @@ function draftItemRowHtml(item = {}, index = 0) {
       <td><input class="draft-due" type="date" value="${escapeHtml(item.due_date || "")}" /></td>
       <td><select class="draft-status compact-input">${actionStatusOptions(item.status || "未开始")}</select></td>
       <td><textarea class="draft-notes compact-textarea">${escapeHtml(item.notes || "")}</textarea></td>
-      <td><button type="button" class="plain-btn danger-text remove-draft-row">删除</button></td>
+      <td>
+        <div class="draft-row-actions">
+          <button type="button" class="plain-btn save-draft-row">修改</button>
+          <button type="button" class="plain-btn danger-text remove-draft-row">删除</button>
+        </div>
+      </td>
     </tr>
   `;
 }
 
-function draftChatHtml(chat = []) {
-  if (!chat.length) return '<div class="muted">暂无对话</div>';
-  return chat.slice(-8).map((item) => `
-    <div class="draft-chat-message ${escapeHtml(item.role || "system")}">
-      <strong>${item.role === "user" ? "管理员/主持人" : item.role === "assistant" ? "系统" : "系统记录"}</strong>
-      <p>${escapeHtml(item.message || "")}</p>
-    </div>
-  `).join("");
+function emptyActionDraft() {
+  const meeting = lastOccurredMeeting() || currentMeeting();
+  return {
+    id: "",
+    title: "新增会议行动项初稿",
+    meeting_id: meeting?.id || "",
+    part: "part2",
+    source_filename: "手动新增",
+    status: "待填写",
+    items: [],
+  };
 }
 
 function renderActionDrafts(drafts) {
   if (!drafts.length) {
-    return `
-      <div class="panel">
-        <h2>会议行动项初稿</h2>
-        <p class="muted">上传会议文字记录后，系统会在这里生成待确认初稿。</p>
-      </div>
-    `;
+    drafts = [emptyActionDraft()];
   }
   return drafts.map((draft) => `
-    <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}">
+    <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}" data-meeting-id="${escapeHtml(draft.meeting_id || "")}" data-part="${escapeHtml(draft.part || "part2")}">
       <div class="section-title">
         <div>
           <h2>${escapeHtml(draft.title || "会议行动项初稿")}</h2>
@@ -1134,19 +1137,11 @@ function renderActionDrafts(drafts) {
         <button type="button" class="approve-draft" ${draft.status === "已确认生成行动项" ? "disabled" : ""}>生成正式行动项</button>
         <span class="message draft-message"></span>
       </div>
-      <div class="draft-chat">
-        <div class="draft-chat-log">${draftChatHtml(draft.chat || [])}</div>
-        <div class="draft-chat-input">
-          <input class="draft-chat-text" placeholder="例如：第1条负责人改成蔡平；第2条删除；新增一条检查库存，负责人美国仓库" />
-          <button type="button" class="send-draft-chat">发送修改要求</button>
-        </div>
-      </div>
     </div>
   `).join("");
 }
 
 function renderActions() {
-  const meeting = currentMeeting();
   const actions = app.data.action_items || [];
   const drafts = (app.data.action_drafts || []).filter((draft) => draft.status !== "已确认生成行动项");
   const canEdit = canManageActions();
@@ -1155,27 +1150,6 @@ function renderActions() {
   qs("#content").innerHTML = `
     <div class="grid">
       ${canEdit ? renderActionDrafts(drafts) : ""}
-      ${canEdit ? `
-      <form id="actionForm" class="panel">
-        <h2>手动新增 / 修改正式行动项</h2>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>会议<select name="meeting_id">${meetingOptions(meeting?.id)}</select></label>
-          <label>段落<select name="part"><option value="part1">第一部分</option><option value="part2" selected>第二部分</option></select></label>
-          <label>负责人<select name="owner_person_id">${registeredPersonOptions("", "待定")}</select></label>
-          <label class="field-wide">事项<input name="title" required /></label>
-          <label>截止日期<input name="due_date" type="date" /></label>
-          <label>优先级<select name="priority">${actionPriorityOptions("P1-本周必须")}</select></label>
-          <label>状态<select name="status">${actionStatusOptions("未开始")}</select></label>
-          <label>负责人补充<input name="owner_text" /></label>
-          <label class="field-wide">备注<textarea name="notes"></textarea></label>
-        </div>
-        <div class="split-actions" style="margin-top:12px">
-          <button type="submit">保存行动项</button>
-          <button type="button" class="plain-btn" id="clearActionBtn">清空</button>
-          <span id="actionMessage" class="message"></span>
-        </div>
-      </form>` : ""}
       <div class="panel">
         <h2>${canEdit ? "正式行动项列表" : "我的本周落实行动项目"}</h2>
         <div class="table-wrap">
@@ -1190,7 +1164,7 @@ function renderActions() {
                   <td>${escapeHtml(a.priority)}</td>
                   <td>${escapeHtml(a.status)}</td>
                   <td>${escapeHtml(a.due_date)}</td>
-                  <td>${canEdit ? `<button class="plain-btn edit-action" data-id="${a.id}">编辑</button>` : ""}</td>
+                  <td>${canEdit ? `<button class="plain-btn danger-text delete-action" data-id="${a.id}">删除</button>` : ""}</td>
                 </tr>
               `).join("") || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
             </tbody>
@@ -1199,14 +1173,12 @@ function renderActions() {
       </div>
     </div>
   `;
-  qs("#actionForm")?.addEventListener("submit", saveAction);
-  qs("#clearActionBtn")?.addEventListener("click", () => qs("#actionForm").reset());
-  document.querySelectorAll(".edit-action").forEach((btn) => btn.addEventListener("click", () => fillAction(btn.dataset.id)));
   document.querySelectorAll(".save-draft").forEach((btn) => btn.addEventListener("click", () => saveActionDraft(btn)));
   document.querySelectorAll(".approve-draft").forEach((btn) => btn.addEventListener("click", () => approveActionDraft(btn)));
-  document.querySelectorAll(".send-draft-chat").forEach((btn) => btn.addEventListener("click", () => sendDraftChat(btn)));
+  document.querySelectorAll(".save-draft-row").forEach((btn) => btn.addEventListener("click", () => saveDraftRow(btn)));
   document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
   document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
+  document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
 }
 
 function draftCardFromButton(button) {
@@ -1231,7 +1203,16 @@ function draftPayloadFromCard(card) {
       };
     })
     .filter(Boolean);
-  return { id: card?.dataset.draftId || "", items };
+  return {
+    id: card?.dataset.draftId || "",
+    meeting_id: card?.dataset.meetingId || (lastOccurredMeeting() || currentMeeting())?.id || "",
+    part: card?.dataset.part || "part2",
+    items,
+  };
+}
+
+function showDraftCardMessage(card, text, ok = false) {
+  showMessage(card?.querySelector(".draft-message"), text, ok);
 }
 
 function showDraftMessage(draftId, text, ok = false) {
@@ -1254,31 +1235,46 @@ function addDraftRow(button) {
   if (tbody.querySelector("td[colspan]")) tbody.innerHTML = "";
   const index = tbody.querySelectorAll("tr").length;
   tbody.insertAdjacentHTML("beforeend", draftItemRowHtml({}, index));
-  tbody.querySelector("tr:last-child .remove-draft-row")?.addEventListener("click", (event) => removeDraftRow(event.currentTarget));
-  tbody.querySelector("tr:last-child .draft-title")?.focus();
+  const row = tbody.querySelector("tr:last-child");
+  row?.querySelector(".save-draft-row")?.addEventListener("click", (event) => saveDraftRow(event.currentTarget));
+  row?.querySelector(".remove-draft-row")?.addEventListener("click", (event) => removeDraftRow(event.currentTarget));
+  row?.querySelector(".draft-title")?.focus();
 }
 
-function removeDraftRow(button) {
+async function removeDraftRow(button) {
   const card = draftCardFromButton(button);
   button.closest("tr")?.remove();
   renumberDraftRows(card);
+  if (!card?.dataset.draftId) {
+    showDraftCardMessage(card, "该行已删除，新增初稿尚未保存。", true);
+    return;
+  }
+  await saveActionDraftFromCard(card, button, "删除中...", "该行已删除");
 }
 
-async function saveActionDraft(button) {
+async function saveActionDraft(button, busyText = "保存中...", successText = "草稿已保存") {
   const card = draftCardFromButton(button);
+  await saveActionDraftFromCard(card, button, busyText, successText);
+}
+
+async function saveActionDraftFromCard(card, button, busyText = "保存中...", successText = "草稿已保存") {
   const draftId = card?.dataset.draftId || "";
-  const done = setBusy(button, "保存中...");
-  showDraftMessage(draftId, "保存草稿中...", true);
+  const done = setBusy(button, busyText);
+  showDraftCardMessage(card, "保存草稿中...", true);
   try {
     const res = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
     upsertById("action_drafts", res.draft);
     renderActions();
-    setTimeout(() => showDraftMessage(draftId, "草稿已保存", true), 0);
+    setTimeout(() => showDraftMessage(res.draft?.id || draftId, successText, true), 0);
   } catch (err) {
-    showDraftMessage(draftId, err.message);
+    showDraftCardMessage(card, err.message);
   } finally {
     done();
   }
+}
+
+async function saveDraftRow(button) {
+  await saveActionDraft(button, "保存中...", "该行修改已保存");
 }
 
 async function approveActionDraft(button) {
@@ -1286,69 +1282,30 @@ async function approveActionDraft(button) {
   const draftId = card?.dataset.draftId || "";
   if (!confirm("确认生成正式行动项？生成后会分发到负责人本周落实行动项目里。")) return;
   const done = setBusy(button, "生成中...");
-  showDraftMessage(draftId, "正在生成正式行动项...", true);
+  showDraftCardMessage(card, "正在生成正式行动项...", true);
   try {
     const saved = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
     upsertById("action_drafts", saved.draft);
-    const res = await api("/api/action-drafts/approve", { method: "POST", body: { draft_id: draftId } });
+    const targetDraftId = saved.draft?.id || draftId;
+    const res = await api("/api/action-drafts/approve", { method: "POST", body: { draft_id: targetDraftId } });
     upsertById("action_drafts", res.draft);
     (res.actions || []).forEach((action) => upsertById("action_items", action));
     renderActions();
-    setTimeout(() => showMessage("#actionMessage", `已生成 ${(res.actions || []).length} 条正式行动项`, true), 0);
   } catch (err) {
-    showDraftMessage(draftId, err.message);
+    showDraftCardMessage(card, err.message);
   } finally {
     done();
   }
 }
 
-async function sendDraftChat(button) {
-  const card = draftCardFromButton(button);
-  const draftId = card?.dataset.draftId || "";
-  const input = card?.querySelector(".draft-chat-text");
-  const message = input?.value?.trim() || "";
-  if (!message) {
-    showDraftMessage(draftId, "请输入修改要求");
-    return;
-  }
-  const done = setBusy(button, "发送中...");
-  showDraftMessage(draftId, "系统正在处理修改要求...", true);
+async function deleteAction(id) {
+  if (!id || !confirm("确认删除这条正式行动项？")) return;
   try {
-    const res = await api("/api/action-drafts/chat", { method: "POST", body: { draft_id: draftId, message } });
-    upsertById("action_drafts", res.draft);
+    await api("/api/actions/delete", { method: "POST", body: { id } });
+    app.data.action_items = (app.data.action_items || []).filter((item) => item.id !== id);
     renderActions();
-    setTimeout(() => showDraftMessage(draftId, res.reply || "已处理", true), 0);
   } catch (err) {
-    showDraftMessage(draftId, err.message);
-  } finally {
-    done();
-  }
-}
-
-function fillAction(id) {
-  const action = (app.data.action_items || []).find((a) => a.id === id);
-  if (!action) return;
-  const form = qs("#actionForm");
-  ensurePersonSelectValue(form.elements.owner_person_id, action.owner_person_id);
-  for (const [key, value] of Object.entries(action)) {
-    if (form.elements[key]) form.elements[key].value = value || "";
-  }
-}
-
-async function saveAction(event) {
-  event.preventDefault();
-  const done = setBusy(submitButton(event.currentTarget));
-  showMessage("#actionMessage", "保存中...", true);
-  const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-  try {
-    const res = await api("/api/actions/save", { method: "POST", body });
-    upsertById("action_items", res.action);
-    renderActions();
-    setTimeout(() => showMessage("#actionMessage", "已保存行动项", true), 0);
-  } catch (err) {
-    showMessage("#actionMessage", err.message);
-  } finally {
-    done();
+    alert(err.message);
   }
 }
 
