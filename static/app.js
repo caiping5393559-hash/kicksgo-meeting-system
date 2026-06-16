@@ -142,6 +142,18 @@ function checkedValues(root, name) {
   return Array.from(root?.querySelectorAll(`input[name="${name}"]:checked`) || []).map((input) => input.value).filter(Boolean);
 }
 
+function upsertById(collection, item) {
+  if (!item?.id) return;
+  app.data[collection] = app.data[collection] || [];
+  const index = app.data[collection].findIndex((entry) => entry.id === item.id);
+  if (index >= 0) app.data[collection][index] = item;
+  else app.data[collection].unshift(item);
+}
+
+function removeById(collection, id) {
+  app.data[collection] = (app.data[collection] || []).filter((entry) => entry.id !== id);
+}
+
 function checkboxOptions(items, selected = [], name = "business_role_ids", emptyText = "暂无可选项") {
   const selectedSet = new Set(selected || []);
   if (!items.length) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
@@ -581,7 +593,7 @@ async function saveReport(event) {
     }
   }
   try {
-    await api("/api/reports/save", {
+    const res = await api("/api/reports/save", {
       method: "POST",
       body: {
         meeting_id: form.get("meeting_id"),
@@ -590,7 +602,7 @@ async function saveReport(event) {
         status: "已保存",
       },
     });
-    await refresh();
+    upsertById("weekly_reports", res.report);
     showMessage("#reportMessage", "已保存", true);
   } catch (err) {
     showMessage("#reportMessage", err.message);
@@ -671,9 +683,10 @@ async function saveNote(event) {
   body.mentioned = body.mentioned === "true";
   body.person_id = body.person_id || app.user.person_id;
   try {
-    await api("/api/notes/save", { method: "POST", body });
-    await refresh();
+    const res = await api("/api/notes/save", { method: "POST", body });
+    upsertById("pre_meeting_notes", res.note);
     renderNotes();
+    setTimeout(() => showMessage("#noteMessage", "已保存备注", true), 0);
   } catch (err) {
     showMessage("#noteMessage", err.message);
   }
@@ -748,9 +761,10 @@ async function saveTranscript(event) {
   event.preventDefault();
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
   try {
-    await api("/api/transcripts/upload", { method: "POST", body });
-    await refresh();
+    const res = await api("/api/transcripts/upload", { method: "POST", body });
+    (res.records || []).forEach((record) => upsertById("transcript_uploads", record));
     renderTranscripts();
+    setTimeout(() => showMessage("#transcriptMessage", "已上传保存", true), 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
   }
@@ -852,9 +866,10 @@ async function saveAction(event) {
   event.preventDefault();
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
   try {
-    await api("/api/actions/save", { method: "POST", body });
-    await refresh();
+    const res = await api("/api/actions/save", { method: "POST", body });
+    upsertById("action_items", res.action);
     renderActions();
+    setTimeout(() => showMessage("#actionMessage", "已保存行动项", true), 0);
   } catch (err) {
     showMessage("#actionMessage", err.message);
   }
@@ -1025,7 +1040,7 @@ function wireAdmin() {
   document.querySelectorAll(".save-user").forEach((btn) => btn.addEventListener("click", async () => {
     const row = btn.closest("tr");
     try {
-      await api("/api/admin/save-user", {
+      const res = await api("/api/admin/save-user", {
         method: "POST",
         body: {
           id: row.dataset.userId,
@@ -1035,7 +1050,7 @@ function wireAdmin() {
           business_role_ids: checkedValues(row, "business_role_ids"),
         },
       });
-      await refresh();
+      upsertById("users", res.user);
       showMessage("#adminUserMessage", "已保存账号", true);
     } catch (err) {
       showMessage("#adminUserMessage", err.message);
@@ -1131,7 +1146,12 @@ async function saveRoleUsers(event) {
         user_ids: userIds,
       },
     });
-    await refresh();
+    upsertById("business_roles", res.business_role);
+    (app.data.users || []).forEach((account) => {
+      const current = (account.business_role_ids || []).filter((id) => id !== res.business_role.id);
+      if (userIds.includes(account.id)) current.push(res.business_role.id);
+      account.business_role_ids = current;
+    });
     renderAdmin();
     setTimeout(() => showMessage("#roleMessage", `已保存：${roleName}，绑定 ${userIds.length} 个账号`, true), 0);
   } catch (err) {
@@ -1196,7 +1216,10 @@ async function deleteBusinessRole(event) {
   if (!confirm(`确定删除业务角色「${roleName}」？删除后会同时解除这个角色和账号的绑定。`)) return;
   try {
     await api("/api/admin/delete-business-role", { method: "POST", body: { id: row.dataset.roleId } });
-    await refresh();
+    removeById("business_roles", row.dataset.roleId);
+    (app.data.users || []).forEach((account) => {
+      account.business_role_ids = (account.business_role_ids || []).filter((id) => id !== row.dataset.roleId);
+    });
     renderAdmin();
     setTimeout(() => showMessage("#roleMessage", `已删除业务角色：${roleName}`, true), 0);
   } catch (err) {
@@ -1215,9 +1238,9 @@ async function savePerson(event) {
   body.meeting_aliases = String(body.meeting_aliases || "").split(/[,，\n]/).map((v) => v.trim()).filter(Boolean);
   body.mention_aliases = getAliasEditorValues(event.currentTarget, "mention_aliases");
   try {
-    await api("/api/admin/save-person", { method: "POST", body });
+    const res = await api("/api/admin/save-person", { method: "POST", body });
+    upsertById("people", res.person);
     closePersonModal();
-    await refresh();
     renderAdmin();
     setTimeout(() => showMessage("#adminUserMessage", "人员资料已保存", true), 0);
   } catch (err) {
