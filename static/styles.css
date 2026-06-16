@@ -326,6 +326,10 @@ p {
   gap: 10px;
 }
 
+.modal-open {
+  overflow: hidden;
+}
+
 .grid {
   display: grid;
   gap: 16px;
@@ -348,6 +352,27 @@ p {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 16px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.48);
+  padding: 24px;
+}
+
+.modal-panel {
+  width: min(980px, 100%);
+  max-height: min(86vh, 760px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  padding: 18px;
 }
 
 .panel h2,

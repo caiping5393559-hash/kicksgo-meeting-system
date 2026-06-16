@@ -896,39 +896,6 @@ function renderAdmin() {
         <div id="roleMessage" class="message"></div>
       </div>
 
-      <form id="personForm" class="panel">
-        <h2>人员档案 / 名称匹配</h2>
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>显示名称<input name="display_name" required /></label>
-          <label>真实姓名<input name="real_name" /></label>
-          <label>中文名<input name="chinese_name" /></label>
-          <label>英文名<input name="english_name" /></label>
-          <label>地区<input name="region" /></label>
-          <label>业务负责<textarea name="business_area"></textarea></label>
-          <label>参加每周会议<select name="attends_weekly"><option value="true">是</option><option value="false">否</option></select></label>
-          <label>需要填周报<select name="needs_weekly_report"><option value="false">否</option><option value="true">是</option></select></label>
-          <label>有登录账号<select name="has_login"><option value="false">否</option><option value="true">是</option></select></label>
-          <label class="field-wide">腾讯会议参会人名，用逗号或换行分隔<textarea name="meeting_aliases" placeholder="例如：Kyle, KYLE, 凯尔"></textarea></label>
-          <div class="alias-label field-wide">
-            <span>现实姓名 / 称呼 / 外号</span>
-            <div class="alias-editor" data-alias-name="mention_aliases">
-              <input type="hidden" name="mention_aliases" />
-              <div class="alias-list"></div>
-              <div class="alias-entry-row">
-                <input class="alias-input" placeholder="输入一个称呼，例如：陈总" />
-                <button type="button" class="plain-btn alias-add">新增</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="split-actions" style="margin-top:12px">
-          <button type="submit">保存人员</button>
-          <button type="button" class="plain-btn" id="clearPersonBtn">清空</button>
-          <span id="personMessage" class="message"></span>
-        </div>
-      </form>
-
       <form id="linksForm" class="panel">
         <h2>固定腾讯会议链接</h2>
         <div class="grid two">
@@ -985,6 +952,48 @@ function renderAdmin() {
               `).join("")}
             </tbody>
           </table>
+        </div>
+      </div>
+      <div id="personModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-panel">
+          <form id="personModalForm">
+            <div class="section-title">
+              <div>
+                <h2>编辑人员资料</h2>
+                <p class="muted">维护现实姓名、腾讯会议名和会议文字里的称呼匹配。</p>
+              </div>
+              <button type="button" class="plain-btn modal-close">关闭</button>
+            </div>
+            <input type="hidden" name="id" />
+            <div class="form-grid">
+              <label>显示名称<input name="display_name" required /></label>
+              <label>真实姓名<input name="real_name" /></label>
+              <label>中文名<input name="chinese_name" /></label>
+              <label>英文名<input name="english_name" /></label>
+              <label>地区<input name="region" /></label>
+              <label>业务负责<textarea name="business_area"></textarea></label>
+              <label>参加每周会议<select name="attends_weekly"><option value="true">是</option><option value="false">否</option></select></label>
+              <label>需要填周报<select name="needs_weekly_report"><option value="false">否</option><option value="true">是</option></select></label>
+              <label>有登录账号<select name="has_login"><option value="false">否</option><option value="true">是</option></select></label>
+              <label class="field-wide">腾讯会议参会人名，用逗号或换行分隔<textarea name="meeting_aliases" placeholder="例如：Kyle, KYLE, 凯尔"></textarea></label>
+              <div class="alias-label field-wide">
+                <span>现实姓名 / 称呼 / 外号</span>
+                <div class="alias-editor" data-alias-name="mention_aliases">
+                  <input type="hidden" name="mention_aliases" />
+                  <div class="alias-list"></div>
+                  <div class="alias-entry-row">
+                    <input class="alias-input" placeholder="输入一个称呼，例如：陈总" />
+                    <button type="button" class="plain-btn alias-add">新增</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="split-actions" style="margin-top:12px">
+              <button type="submit">保存人员</button>
+              <button type="button" class="plain-btn modal-close">取消</button>
+              <span id="personModalMessage" class="message"></span>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -1049,12 +1058,12 @@ function wireAdmin() {
     }
   });
   document.querySelectorAll(".save-role-users").forEach((btn) => btn.addEventListener("click", saveRoleUsers));
-  qs("#personForm").addEventListener("submit", savePerson);
-  qs("#clearPersonBtn").addEventListener("click", () => {
-    qs("#personForm").reset();
-    setAliasEditorValues(qs("#personForm"), "mention_aliases", []);
+  qs("#personModalForm")?.addEventListener("submit", savePerson);
+  document.querySelectorAll(".modal-close").forEach((btn) => btn.addEventListener("click", closePersonModal));
+  qs("#personModal")?.addEventListener("click", (event) => {
+    if (event.target.id === "personModal") closePersonModal();
   });
-  document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => fillPerson(btn.dataset.id)));
+  document.querySelectorAll(".edit-person").forEach((btn) => btn.addEventListener("click", () => openPersonModal(btn.dataset.id)));
   qs("#linksForm").addEventListener("submit", saveLinks);
   qs("#meetingForm").addEventListener("submit", saveMeeting);
   qs("#clearMeetingBtn").addEventListener("click", () => qs("#meetingForm").reset());
@@ -1127,23 +1136,40 @@ async function savePerson(event) {
   body.mention_aliases = getAliasEditorValues(event.currentTarget, "mention_aliases");
   try {
     await api("/api/admin/save-person", { method: "POST", body });
+    closePersonModal();
     await refresh();
     renderAdmin();
+    setTimeout(() => showMessage("#adminUserMessage", "人员资料已保存", true), 0);
   } catch (err) {
-    showMessage("#personMessage", err.message);
+    showMessage("#personModalMessage", err.message);
   }
 }
 
-function fillPerson(id) {
+function openPersonModal(id) {
   const p = (app.data.people || []).find((item) => item.id === id);
   if (!p) return;
-  const form = qs("#personForm");
+  const modal = qs("#personModal");
+  const form = qs("#personModalForm");
+  if (!modal || !form) return;
+  form.reset();
+  showMessage("#personModalMessage", "");
   for (const [key, value] of Object.entries(p)) {
     if (!form.elements[key]) continue;
     form.elements[key].value = Array.isArray(value) ? value.join(", ") : typeof value === "boolean" ? String(value) : value || "";
   }
   setAliasEditorValues(form, "mention_aliases", p.mention_aliases || []);
-  window.scrollTo({ top: form.offsetTop - 20, behavior: "smooth" });
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  form.elements.display_name?.focus();
+}
+
+function closePersonModal() {
+  const modal = qs("#personModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
 }
 
 async function saveLinks(event) {
@@ -1211,6 +1237,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !qs("#personModal")?.classList.contains("hidden")) {
+    closePersonModal();
+    return;
+  }
   if (event.key !== "Enter" || !event.target.classList.contains("alias-input")) return;
   event.preventDefault();
   addAliasValue(event.target.closest(".alias-editor"));
