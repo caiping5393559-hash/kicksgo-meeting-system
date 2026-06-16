@@ -285,6 +285,21 @@ function showMessage(target, text, ok = false) {
   el.className = ok ? "message success" : "message error";
 }
 
+function setBusy(button, text = "保存中...") {
+  if (!button) return () => {};
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = text;
+  return () => {
+    button.disabled = false;
+    button.textContent = originalText;
+  };
+}
+
+function submitButton(form) {
+  return form?.querySelector('button[type="submit"]');
+}
+
 function renderAuth() {
   qs("#authView").classList.remove("hidden");
   qs("#appView").classList.add("hidden");
@@ -596,6 +611,8 @@ async function saveReport(event) {
     showMessage("#reportMessage", "只有美国代运营角色可以填写或修改周报");
     return;
   }
+  const done = setBusy(submitButton(event.currentTarget));
+  showMessage("#reportMessage", "保存中...", true);
   const form = new FormData(event.currentTarget);
   const fields = {};
   for (const section of reportSections) {
@@ -617,6 +634,8 @@ async function saveReport(event) {
     showMessage("#reportMessage", "已保存", true);
   } catch (err) {
     showMessage("#reportMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -688,6 +707,8 @@ function fillNote(id) {
 
 async function saveNote(event) {
   event.preventDefault();
+  const done = setBusy(submitButton(event.currentTarget));
+  showMessage("#noteMessage", "保存中...", true);
   const form = new FormData(event.currentTarget);
   const body = Object.fromEntries(form.entries());
   body.needs_decision = body.needs_decision === "true";
@@ -700,6 +721,8 @@ async function saveNote(event) {
     setTimeout(() => showMessage("#noteMessage", "已保存备注", true), 0);
   } catch (err) {
     showMessage("#noteMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -770,6 +793,8 @@ function renderTranscripts() {
 
 async function saveTranscript(event) {
   event.preventDefault();
+  const done = setBusy(submitButton(event.currentTarget), "上传中...");
+  showMessage("#transcriptMessage", "上传保存中...", true);
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
   try {
     const res = await api("/api/transcripts/upload", { method: "POST", body });
@@ -778,6 +803,8 @@ async function saveTranscript(event) {
     setTimeout(() => showMessage("#transcriptMessage", "已上传保存", true), 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -875,6 +902,8 @@ function fillAction(id) {
 
 async function saveAction(event) {
   event.preventDefault();
+  const done = setBusy(submitButton(event.currentTarget));
+  showMessage("#actionMessage", "保存中...", true);
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
   try {
     const res = await api("/api/actions/save", { method: "POST", body });
@@ -883,6 +912,8 @@ async function saveAction(event) {
     setTimeout(() => showMessage("#actionMessage", "已保存行动项", true), 0);
   } catch (err) {
     showMessage("#actionMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -1056,6 +1087,8 @@ function renderAdmin() {
 function wireAdmin() {
   document.querySelectorAll(".save-user").forEach((btn) => btn.addEventListener("click", async () => {
     const row = btn.closest("tr");
+    const done = setBusy(btn);
+    showMessage("#adminUserMessage", "保存账号中...", true);
     try {
       const res = await api("/api/admin/save-user", {
         method: "POST",
@@ -1071,41 +1104,59 @@ function wireAdmin() {
       showMessage("#adminUserMessage", "已保存账号", true);
     } catch (err) {
       showMessage("#adminUserMessage", err.message);
+    } finally {
+      done();
     }
   }));
   document.querySelectorAll(".reset-user").forEach((btn) => btn.addEventListener("click", async () => {
     const row = btn.closest("tr");
+    const done = setBusy(btn, "重置中...");
+    showMessage("#adminUserMessage", "重置密码中...", true);
     try {
       const res = await api("/api/admin/reset-password", { method: "POST", body: { user_id: row.dataset.userId } });
       showMessage("#adminUserMessage", `临时密码：${res.temporary_password}`, true);
     } catch (err) {
       showMessage("#adminUserMessage", err.message);
+    } finally {
+      done();
     }
   }));
   document.querySelectorAll(".delete-user").forEach((btn) => btn.addEventListener("click", async () => {
     const row = btn.closest("tr");
     const username = row.children[0]?.textContent?.trim() || "这个账号";
     if (!confirm(`确定删除用户「${username}」？只会删除登录账号，不会删除人员档案。`)) return;
+    const deletedUser = (app.data.users || []).find((account) => account.id === row.dataset.userId);
+    const done = setBusy(btn, "删除中...");
+    showMessage("#adminUserMessage", "删除账号中...", true);
     try {
       await api("/api/admin/delete-user", { method: "POST", body: { user_id: row.dataset.userId } });
-      await refresh();
+      removeById("users", row.dataset.userId);
+      if (deletedUser?.person_id && !(app.data.users || []).some((account) => account.person_id === deletedUser.person_id)) {
+        const person = personById(deletedUser.person_id);
+        if (person) person.has_login = false;
+      }
       renderAdmin();
       setTimeout(() => showMessage("#adminUserMessage", "用户已删除", true), 0);
     } catch (err) {
       showMessage("#adminUserMessage", err.message);
+      done();
     }
   }));
   qs("#createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const done = setBusy(submitButton(event.currentTarget), "创建中...");
+    showMessage("#createUserMessage", "创建账号中...", true);
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     body.business_role_ids = checkedValues(event.currentTarget, "business_role_ids");
     try {
       const res = await api("/api/admin/create-user", { method: "POST", body });
-      await refresh();
+      upsertById("users", res.user);
       renderAdmin();
       setTimeout(() => showMessage("#createUserMessage", `临时密码：${res.temporary_password}`, true), 0);
     } catch (err) {
       showMessage("#createUserMessage", err.message);
+    } finally {
+      done();
     }
   });
   document.querySelectorAll(".save-role-users").forEach((btn) => btn.addEventListener("click", saveRoleUsers));
@@ -1158,21 +1209,19 @@ async function saveRoleUsers(event) {
         name: roleName,
         description: row.querySelector(".role-description")?.value || "",
         aliases,
-      },
-    });
-    await api("/api/admin/save-role-users", {
-      method: "POST",
-      body: {
-        role_id: res.business_role.id,
         user_ids: userIds,
       },
     });
     upsertById("business_roles", res.business_role);
-    (app.data.users || []).forEach((account) => {
-      const current = (account.business_role_ids || []).filter((id) => id !== res.business_role.id);
-      if (userIds.includes(account.id)) current.push(res.business_role.id);
-      account.business_role_ids = current;
-    });
+    if (res.users) {
+      app.data.users = res.users;
+    } else {
+      (app.data.users || []).forEach((account) => {
+        const current = (account.business_role_ids || []).filter((id) => id !== res.business_role.id);
+        if (userIds.includes(account.id)) current.push(res.business_role.id);
+        account.business_role_ids = current;
+      });
+    }
     renderAdmin();
     setTimeout(() => showMessage("#roleMessage", `已保存：${roleName}，绑定 ${userIds.length} 个账号`, true), 0);
   } catch (err) {
@@ -1232,9 +1281,12 @@ function addBusinessRoleRow() {
 
 async function deleteBusinessRole(event) {
   event.preventDefault();
+  const button = event.currentTarget;
   const row = event.currentTarget.closest("tr");
   const roleName = String(row.querySelector(".role-name")?.value || "这个角色").trim();
   if (!confirm(`确定删除业务角色「${roleName}」？删除后会同时解除这个角色和账号的绑定。`)) return;
+  const done = setBusy(button, "删除中...");
+  showMessage("#roleMessage", "删除角色中...", true);
   try {
     await api("/api/admin/delete-business-role", { method: "POST", body: { id: row.dataset.roleId } });
     removeById("business_roles", row.dataset.roleId);
@@ -1245,11 +1297,14 @@ async function deleteBusinessRole(event) {
     setTimeout(() => showMessage("#roleMessage", `已删除业务角色：${roleName}`, true), 0);
   } catch (err) {
     showMessage("#roleMessage", err.message);
+    done();
   }
 }
 
 async function savePerson(event) {
   event.preventDefault();
+  const done = setBusy(submitButton(event.currentTarget));
+  showMessage("#personModalMessage", "保存人员中...", true);
   collectPendingAliasInputs(event.currentTarget);
   const form = new FormData(event.currentTarget);
   const body = Object.fromEntries(form.entries());
@@ -1266,6 +1321,8 @@ async function savePerson(event) {
     setTimeout(() => showMessage("#adminUserMessage", "人员资料已保存", true), 0);
   } catch (err) {
     showMessage("#personModalMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -1424,12 +1481,15 @@ qs("#logoutBtn").addEventListener("click", async () => {
 
 qs("#changePasswordForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const done = setBusy(submitButton(event.currentTarget), "修改中...");
   try {
     const body = Object.fromEntries(new FormData(event.currentTarget).entries());
     await api("/api/change-password", { method: "POST", body });
     await loadMe();
   } catch (err) {
     alert(err.message);
+  } finally {
+    done();
   }
 });
 

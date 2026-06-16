@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -407,6 +408,7 @@ class Store:
         TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
         self._firestore = None
         self._firebase_ready = False
+        self._state_cache: dict[str, Any] | None = None
         self._try_init_firebase()
 
     def _try_init_firebase(self) -> None:
@@ -450,19 +452,24 @@ class Store:
         return self._firestore.collection(FIREBASE_COLLECTION_PREFIX).document("transcripts").collection("items").document(transcript_id)
 
     def load(self) -> dict[str, Any]:
+        if self._state_cache is not None:
+            return copy.deepcopy(self._state_cache)
         if self._firestore:
             ref = self.state_ref()
             doc = ref.get()
             if doc.exists:
                 data = doc.to_dict() or {}
                 state = data.get("state") or {}
-                return ensure_state(state)
+                self._state_cache = copy.deepcopy(plain(ensure_state(state)))
+                return copy.deepcopy(self._state_cache)
             state = default_state()
             self.save(state, "init")
             return state
         if STATE_PATH.exists():
             try:
-                return ensure_state(json.loads(STATE_PATH.read_text(encoding="utf-8")))
+                state = ensure_state(json.loads(STATE_PATH.read_text(encoding="utf-8")))
+                self._state_cache = copy.deepcopy(plain(state))
+                return copy.deepcopy(self._state_cache)
             except Exception:
                 traceback.print_exc()
         state = default_state()
@@ -472,10 +479,12 @@ class Store:
     def save(self, state: dict[str, Any], reason: str = "save") -> dict[str, Any]:
         state = ensure_state(state)
         state["updated_at"] = now_iso()
+        payload = plain(state)
         if self._firestore:
-            self.state_ref().set({"state": plain(state), "updated_at": now_iso(), "reason": reason})
+            self.state_ref().set({"state": payload, "updated_at": now_iso(), "reason": reason})
         else:
-            STATE_PATH.write_text(json.dumps(plain(state), ensure_ascii=False, indent=2), encoding="utf-8")
+            STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._state_cache = copy.deepcopy(payload)
         return state
 
     def save_transcript_content(self, transcript_id: str, content: str) -> None:
@@ -1391,23 +1400,22 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             user_id = new_id("user")
             person_id = str(payload.get("person_id") or "")
-            state["users"].append(
-                {
-                    "id": user_id,
-                    "username": username,
-                    "password_hash": password_hash(password),
-                    "role": str(payload.get("role") or "member"),
-                    "status": str(payload.get("status") or "active"),
-                    "person_id": person_id,
-                    "business_role_ids": clean_business_role_ids(state, payload.get("business_role_ids")),
-                    "created_at": now_iso(),
-                    "last_login_at": "",
-                    "must_change_password": True,
-                }
-            )
+            new_user = {
+                "id": user_id,
+                "username": username,
+                "password_hash": password_hash(password),
+                "role": str(payload.get("role") or "member"),
+                "status": str(payload.get("status") or "active"),
+                "person_id": person_id,
+                "business_role_ids": clean_business_role_ids(state, payload.get("business_role_ids")),
+                "created_at": now_iso(),
+                "last_login_at": "",
+                "must_change_password": True,
+            }
+            state["users"].append(new_user)
             audit(state, user, "admin_create_user", {"username": username})
             store.save(state, "admin_create_user")
-            self.send_json({"ok": True, "temporary_password": password})
+            self.send_json({"ok": True, "temporary_password": password, "user": sanitize_user(new_user)})
             return
         if path == "/api/admin/save-user":
             target = user_by_id(state, str(payload.get("id") or ""))
@@ -1510,9 +1518,23 @@ class AppHandler(BaseHTTPRequestHandler):
             else:
                 saved = {"id": new_id("bizrole"), **data}
                 state["business_roles"].append(saved)
-            audit(state, user, "admin_save_business_role", {"role_id": saved["id"]})
+            if "user_ids" in payload:
+                user_ids = {str(value) for value in payload.get("user_ids", []) if value}
+                valid_user_ids = {str(account.get("id")) for account in state.get("users", [])}
+                user_ids = user_ids & valid_user_ids
+                for account in state.get("users", []):
+                    current = [rid for rid in account.get("business_role_ids", []) if rid != saved["id"]]
+                    if account.get("id") in user_ids:
+                        current.append(saved["id"])
+                    account["business_role_ids"] = clean_business_role_ids(state, current)
+            else:
+                user_ids = None
+            audit_detail = {"role_id": saved["id"]}
+            if user_ids is not None:
+                audit_detail["user_count"] = len(user_ids)
+            audit(state, user, "admin_save_business_role", audit_detail)
             store.save(state, "admin_save_business_role")
-            self.send_json({"ok": True, "business_role": saved})
+            self.send_json({"ok": True, "business_role": saved, "users": [sanitize_user(account) for account in state.get("users", [])]})
             return
         if path == "/api/admin/delete-business-role":
             role_id = str(payload.get("id") or "")
