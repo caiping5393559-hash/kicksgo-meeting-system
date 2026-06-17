@@ -184,6 +184,14 @@ function canFillAgencyReport() {
   return hasBusinessRole(AGENCY_OPS_ROLE_ID);
 }
 
+function canViewAgencyReportPage() {
+  return canFillAgencyReport() || ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(PARTNER_BOSS_ROLE_ID);
+}
+
+function canSelectAgencyReportPerson() {
+  return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(PARTNER_BOSS_ROLE_ID);
+}
+
 function canManageActions() {
   return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID) || hasBusinessRole(CN_ADMIN_ROLE_ID);
 }
@@ -730,7 +738,7 @@ function renderAppShell() {
   qs("#appView").classList.remove("hidden");
   const visiblePages = pages.filter(([key]) => {
     if (key === "admin") return app.user?.role === "admin";
-    if (key === "report") return canFillAgencyReport();
+    if (key === "report") return canViewAgencyReportPage();
     if (key === "meeting_ops") return canViewTranscripts();
     return true;
   });
@@ -1216,7 +1224,7 @@ function renderReport() {
   });
   const reportPersonIds = new Set(reportPeople.map((item) => item.person.id));
   const canEditReport = canFillAgencyReport();
-  const canChoose = ["admin", "manager"].includes(app.user.role);
+  const canChoose = canSelectAgencyReportPerson();
   const defaultPersonId = agencyPersonIds[0] || "";
   const storedPersonId = sessionStorage.getItem("reportPersonId") || "";
   const selectedPerson = canChoose
