@@ -36,6 +36,7 @@ FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicks
 AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
 MEETING_HOST_ROLE_ID = "role_meeting_host"
 CN_ADMIN_ROLE_ID = "role_cn_admin"
+PARTNER_BOSS_ROLE_ID = "role_partner_boss"
 
 AGENDA_AGENCY = "美国代运营内部评估"
 AGENDA_DOMESTIC = "国内货品与采购"
@@ -871,6 +872,10 @@ def user_has_business_role(user: dict[str, Any], role_id: str) -> bool:
 
 def can_manage_actions(user: dict[str, Any]) -> bool:
     return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID) or user_has_business_role(user, CN_ADMIN_ROLE_ID)
+
+
+def can_view_reading_records(user: dict[str, Any]) -> bool:
+    return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID) or user_has_business_role(user, PARTNER_BOSS_ROLE_ID)
 
 
 def is_agency_only_user(user: dict[str, Any]) -> bool:
@@ -2246,6 +2251,7 @@ class AppHandler(BaseHTTPRequestHandler):
         visible_transcript_ids = {record.get("id") for record in visible_transcripts}
         if can_access_transcripts(user):
             visible_person_ids = {p.get("id") for p in state.get("people", []) if p.get("id")}
+        can_see_all_reading_records = can_view_reading_records(user)
         return {
             "users": [
                 sanitize_user(account)
@@ -2266,9 +2272,12 @@ class AppHandler(BaseHTTPRequestHandler):
             "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") == person_id],
             "minutes_view_logs": [
                 log for log in state.get("minutes_view_logs", [])
-                if log.get("transcript_id") in visible_transcript_ids
+                if can_see_all_reading_records or log.get("transcript_id") in visible_transcript_ids
             ],
-            "action_view_logs": [log for log in state.get("action_view_logs", []) if log.get("user_id") == user.get("id")],
+            "action_view_logs": [
+                log for log in state.get("action_view_logs", [])
+                if can_see_all_reading_records or log.get("user_id") == user.get("id")
+            ],
             "audit_logs": [],
         }
 

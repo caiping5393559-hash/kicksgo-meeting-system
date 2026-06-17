@@ -1223,6 +1223,19 @@ tr:last-child td {
   line-height: 1.55;
 }
 
+.compact-read-panel {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.compact-read-panel h2 {
+  margin-bottom: 6px;
+}
+
+.compact-read-panel .hint {
+  margin-bottom: 10px;
+}
+
 @media (max-width: 920px) {
   .app-shell {
     grid-template-columns: 1fr;

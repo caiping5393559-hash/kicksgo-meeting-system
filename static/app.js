@@ -11,6 +11,7 @@ const app = {
 const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
 const MEETING_HOST_ROLE_ID = "role_meeting_host";
 const CN_ADMIN_ROLE_ID = "role_cn_admin";
+const PARTNER_BOSS_ROLE_ID = "role_partner_boss";
 
 const pages = [
   ["dashboard", "周会首页"],
@@ -172,6 +173,10 @@ function canFillAgencyReport() {
 
 function canManageActions() {
   return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID) || hasBusinessRole(CN_ADMIN_ROLE_ID);
+}
+
+function canViewReadingRecords() {
+  return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID) || hasBusinessRole(PARTNER_BOSS_ROLE_ID);
 }
 
 function isAgencyOnlyUser(user = app.user) {
@@ -535,6 +540,35 @@ function minutesReadersHtml(recordId) {
 
 function actionNotesText(action) {
   return action?.notes || [action?.time_type, action?.time_note].filter(Boolean).join("；") || "-";
+}
+
+function actionReadStatusRowsHtml() {
+  const users = (app.data?.users || []).filter((user) => user.status !== "disabled");
+  if (!users.length) return '<tr><td colspan="4" class="muted">暂无账号</td></tr>';
+  return users.map((user) => `
+    <tr>
+      <td>${escapeHtml(user.username || "")}</td>
+      <td>${escapeHtml(personName(user.person_id) || "-")}</td>
+      <td>${escapeHtml(userBusinessRoleNames(user))}</td>
+      <td>${escapeHtml(user.last_my_actions_viewed_at || "未查看")}</td>
+    </tr>
+  `).join("");
+}
+
+function readingRecordsPanelHtml() {
+  if (!canViewReadingRecords()) return "";
+  return `
+    <div class="panel compact-read-panel">
+      <h2>阅读记录</h2>
+      <p class="hint">管理员、合伙人、会议主持人可查看。用于确认会后是否有人打开完整纪要，以及是否查看过自己的行动项。</p>
+      <div class="table-wrap compact-table-wrap">
+        <table>
+          <thead><tr><th>账号</th><th>人员</th><th>业务角色</th><th>最后查看我的行动项</th></tr></thead>
+          <tbody>${actionReadStatusRowsHtml()}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
 }
 
 function transcriptPartStatusHtml(meetingId, part) {
@@ -1039,6 +1073,8 @@ function renderDashboard() {
         </div>
         <div id="transcriptViewer" class="panel transcript-viewer nested-viewer hidden"></div>
       </div>
+
+      ${readingRecordsPanelHtml()}
 
       <div class="panel">
         <h2>三、内部经营复盘会流程</h2>
