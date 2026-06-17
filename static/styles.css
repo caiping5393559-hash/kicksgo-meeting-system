@@ -430,6 +430,129 @@ p {
   font-size: 13px;
 }
 
+.two-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.dashboard-links {
+  margin-top: 14px;
+}
+
+.compact-section-title {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.compact-table-wrap table {
+  min-width: 620px;
+}
+
+.compare-panel {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.compare-card h3 {
+  margin-bottom: 10px;
+}
+
+.compare-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 86px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.compare-bar {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe5ef;
+}
+
+.compare-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f6fb4;
+}
+
+.minutes-box,
+.agenda-action-reference {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.minutes-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 12px;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.minutes-editor {
+  min-height: 280px;
+  line-height: 1.7;
+  background: #fff;
+}
+
+.nested-viewer {
+  margin-top: 16px;
+}
+
+.guidance-box {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.guidance-box > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px 12px;
+}
+
+.guidance-box strong,
+.guidance-box span {
+  display: block;
+}
+
+.guidance-box span {
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);

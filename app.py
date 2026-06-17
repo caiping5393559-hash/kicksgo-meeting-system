@@ -35,6 +35,7 @@ SESSION_SECRET = os.environ.get("SESSION_SECRET") or "dev-change-me-kicksgo-week
 FIREBASE_COLLECTION_PREFIX = os.environ.get("FIREBASE_COLLECTION_PREFIX", "kicksgo_meeting")
 AGENCY_OPS_ROLE_ID = "role_us_agency_ops"
 MEETING_HOST_ROLE_ID = "role_meeting_host"
+CN_ADMIN_ROLE_ID = "role_cn_admin"
 
 AGENDA_AGENCY = "美国代运营内部评估"
 AGENDA_DOMESTIC = "国内货品与采购"
@@ -422,7 +423,7 @@ def default_state() -> dict[str, Any]:
                 {
                     "id": "link_part1",
                     "part": "part1",
-                    "title": "第一部分：美国代运营周报",
+                    "title": "第一部分：美国代运营每周报表",
                     "url": "",
                     "meeting_id": "",
                     "password": "",
@@ -622,7 +623,7 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     for link in state["settings"].get("meeting_links", []):
         if link.get("id") == "link_part1":
             if "凯尔" in str(link.get("title") or ""):
-                link["title"] = "第一部分：美国代运营周报"
+                link["title"] = "第一部分：美国代运营每周报表"
             if "凯尔" in str(link.get("host") or ""):
                 link["host"] = "美国代运营/主持人"
             if "凯尔" in str(link.get("notes") or ""):
@@ -785,7 +786,7 @@ def user_has_business_role(user: dict[str, Any], role_id: str) -> bool:
 
 
 def can_manage_actions(user: dict[str, Any]) -> bool:
-    return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID)
+    return is_manager(user) or user_has_business_role(user, MEETING_HOST_ROLE_ID) or user_has_business_role(user, CN_ADMIN_ROLE_ID)
 
 
 def is_agency_only_user(user: dict[str, Any]) -> bool:
@@ -801,6 +802,12 @@ def can_read_transcript_record(user: dict[str, Any], record: dict[str, Any]) -> 
     if can_manage_actions(user):
         return True
     return can_access_transcripts(user)
+
+
+def can_see_transcript_summary(user: dict[str, Any], record: dict[str, Any]) -> bool:
+    if can_read_transcript_record(user, record):
+        return True
+    return is_agency_only_user(user) and record.get("part") == "part1"
 
 
 def audit(state: dict[str, Any], user: dict[str, Any] | None, action: str, detail: dict[str, Any] | None = None) -> None:
@@ -1023,7 +1030,7 @@ def build_transcript_record(
         "id": transcript_id,
         "meeting_id": meeting_id,
         "part": part,
-        "title": "第一部分：美国代运营周报" if part == "part1" else "第二部分：内部经营复盘",
+        "title": "第一部分：美国代运营每周报表" if part == "part1" else "第二部分：内部经营复盘",
         "original_filename": filename,
         "char_count": len(content),
         "line_count": len(content.splitlines()),
@@ -1036,6 +1043,89 @@ def build_transcript_record(
         "uploaded_by": user.get("id"),
         "uploaded_at": now_iso(),
     }
+
+
+def clean_minutes_line(line: str) -> str:
+    line = re.sub(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*", "", str(line or "").strip())
+    line = re.sub(r"\s+", " ", line).strip()
+    speaker, _person_id, body = parse_transcript_line({}, line)
+    if speaker and body:
+        line = f"{speaker}：{body}"
+    return line[:180]
+
+
+def pick_minutes_lines(lines: list[str], keywords: list[str], limit: int) -> list[str]:
+    picked: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if not any(keyword.lower() in line.lower() for keyword in keywords):
+            continue
+        key = normalize_name(line[:80])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        picked.append(line)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def generate_part1_minutes(content: str, state: dict[str, Any]) -> str:
+    raw_lines = [clean_minutes_line(line) for line in str(content or "").splitlines()]
+    lines = [line for line in raw_lines if len(line) >= 8 and not looks_like_binary_text(line)]
+    analysis = extract_speakers(content, state)
+    speakers = [item.get("person_name") or item.get("speaker") for item in analysis.get("matched_speakers", [])[:8]]
+    data_lines = pick_minutes_lines(lines, ["gmv", "$", "美金", "订单", "单", "客单", "小时", "直播"], 6)
+    operation_lines = pick_minutes_lines(lines, ["直播", "主播", "视频", "达人", "流量", "转化", "店铺", "sku", "货", "库存"], 8)
+    issue_lines = pick_minutes_lines(lines, ["问题", "缺货", "延迟", "错发", "漏发", "退", "卡", "需要", "风险", "不够", "暂停"], 8)
+    next_lines = pick_minutes_lines(lines, ["下周", "之后", "计划", "准备", "增加", "调整", "优化", "继续", "补货"], 6)
+    fallback = []
+    for line in lines:
+        key = normalize_name(line[:80])
+        if key and line not in fallback:
+            fallback.append(line)
+        if len(fallback) >= 8:
+            break
+
+    def bullets(items: list[str], empty: str) -> str:
+        values = items or fallback[:3]
+        return "\n".join(f"- {item}" for item in values) if values else f"- {empty}"
+
+    return "\n\n".join(
+        [
+            "一、会议概况",
+            f"- 参与发言/提到人员：{'、'.join(speakers) if speakers else '系统未识别到明确人员'}",
+            "二、关键经营信息",
+            bullets(data_lines, "本段文字中未识别到明确经营数据。"),
+            "三、直播、内容与店铺运营",
+            bullets(operation_lines, "本段文字中未识别到明确运营信息。"),
+            "四、问题与风险",
+            bullets(issue_lines, "本段文字中未识别到明确问题。"),
+            "五、下周关注",
+            bullets(next_lines, "建议会后由管理员根据讨论补充下周关注事项。"),
+        ]
+    )
+
+
+def remove_existing_transcript_outputs(state: dict[str, Any], meeting_id: str, part: str) -> list[str]:
+    removed_ids = [
+        str(record.get("id") or "")
+        for record in state.setdefault("transcript_uploads", [])
+        if record.get("meeting_id") == meeting_id and record.get("part") == part
+    ]
+    state["transcript_uploads"] = [
+        record for record in state.get("transcript_uploads", [])
+        if not (record.get("meeting_id") == meeting_id and record.get("part") == part)
+    ]
+    state["action_drafts"] = [
+        draft for draft in state.get("action_drafts", [])
+        if not (
+            draft.get("meeting_id") == meeting_id
+            and draft.get("part") == part
+            and draft.get("status") != "已确认生成行动项"
+        )
+    ]
+    return [item for item in removed_ids if item]
 
 
 def person_display_name(person: dict[str, Any] | None) -> str:
@@ -1503,10 +1593,11 @@ class AppHandler(BaseHTTPRequestHandler):
             if not record:
                 self.send_json({"ok": False, "error": "Transcript not found"}, 404)
                 return
-            if not can_read_transcript_record(user, record):
+            if not can_see_transcript_summary(user, record):
                 self.send_json({"ok": False, "error": "No permission"}, 403)
                 return
-            self.send_json({"ok": True, "record": record, "content": store.load_transcript_content(transcript_id)})
+            content = store.load_transcript_content(transcript_id) if can_read_transcript_record(user, record) else ""
+            self.send_json({"ok": True, "record": record, "content": content})
             return
         self.serve_static(path)
 
@@ -1540,6 +1631,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/transcripts/upload":
             self.handle_upload_transcript(state, user, payload)
+            return
+        if path == "/api/transcripts/minutes/save":
+            self.handle_save_transcript_minutes(state, user, payload)
             return
         if path == "/api/action-drafts/save":
             self.handle_save_action_draft(state, user, payload)
@@ -1654,7 +1748,7 @@ class AppHandler(BaseHTTPRequestHandler):
         visible_person_ids = {person_id, *agency_person_ids}
         visible_transcripts = [
             record for record in state.get("transcript_uploads", [])
-            if can_read_transcript_record(user, record)
+            if can_see_transcript_summary(user, record)
         ]
         if can_access_transcripts(user):
             visible_person_ids = {p.get("id") for p in state.get("people", []) if p.get("id")}
@@ -1881,7 +1975,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_upload_transcript(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
-            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以上传会议文字记录"}, 403)
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以上传会议文字记录"}, 403)
             return
         filename = str(payload.get("filename") or "")
         try:
@@ -1905,7 +1999,11 @@ class AppHandler(BaseHTTPRequestHandler):
             pieces.append((selected_part, content))
         records: list[dict[str, Any]] = []
         drafts: list[dict[str, Any]] = []
+        replaced: list[dict[str, Any]] = []
         for part, part_content in pieces:
+            removed_ids = remove_existing_transcript_outputs(state, meeting_id, part)
+            if removed_ids:
+                replaced.append({"part": part, "ids": removed_ids})
             transcript_id = new_id("transcript")
             record = build_transcript_record(
                 state=state,
@@ -1917,20 +2015,51 @@ class AppHandler(BaseHTTPRequestHandler):
                 content=part_content,
                 split_marker=split_marker,
             )
+            if part == "part1":
+                record["minutes_draft"] = generate_part1_minutes(part_content, state)
+                record["minutes_final"] = ""
+                record["minutes_status"] = "draft"
+                record["minutes_updated_at"] = now_iso()
+                record["minutes_updated_by"] = user.get("id")
             store.save_transcript_content(transcript_id, part_content)
             state["transcript_uploads"].append(record)
             records.append(record)
-            drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, part_content, filename))
+            if part == "part2":
+                drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, part_content, filename))
         if not records:
             self.send_json({"ok": False, "error": "自动切分后没有可保存的文字内容"}, 400)
             return
-        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker})
+        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "replaced": replaced})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker})
+        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "replaced": replaced})
+
+    def handle_save_transcript_minutes(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以保存正式会议纪要"}, 403)
+            return
+        transcript_id = str(payload.get("transcript_id") or payload.get("id") or "")
+        minutes_text = str(payload.get("minutes") or "").strip()
+        if len(minutes_text) < 6:
+            self.send_json({"ok": False, "error": "会议纪要内容太短"}, 400)
+            return
+        record = next((item for item in state.get("transcript_uploads", []) if item.get("id") == transcript_id), None)
+        if not record:
+            self.send_json({"ok": False, "error": "会议文字记录不存在"}, 404)
+            return
+        if record.get("part") != "part1":
+            self.send_json({"ok": False, "error": "只有第一部分会议文字需要保存会议纪要"}, 400)
+            return
+        record["minutes_final"] = minutes_text
+        record["minutes_status"] = "final"
+        record["minutes_updated_at"] = now_iso()
+        record["minutes_updated_by"] = user.get("id")
+        audit(state, user, "save_transcript_minutes", {"transcript_id": transcript_id, "meeting_id": record.get("meeting_id")})
+        store.save(state, "save_transcript_minutes")
+        self.send_json({"ok": True, "record": record})
 
     def handle_save_action_draft(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
-            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以修改行动项初稿"}, 403)
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以修改行动项初稿"}, 403)
             return
         draft_id = str(payload.get("id") or "")
         draft = find_action_draft(state, draft_id) if draft_id else None
@@ -1972,7 +2101,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_action_draft_chat(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
-            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以修改行动项初稿"}, 403)
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以修改行动项初稿"}, 403)
             return
         draft = find_action_draft(state, str(payload.get("draft_id") or payload.get("id") or ""))
         if not draft:
@@ -1993,7 +2122,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_approve_action_draft(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
-            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以确认行动项初稿"}, 403)
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以确认行动项初稿"}, 403)
             return
         draft = find_action_draft(state, str(payload.get("draft_id") or payload.get("id") or ""))
         if not draft:
@@ -2041,7 +2170,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_save_action(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
-            self.send_json({"ok": False, "error": "只有管理员或会议主持人可以编辑行动项"}, 403)
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以编辑行动项"}, 403)
             return
         item_id = str(payload.get("id") or "")
         existing = next((a for a in state["action_items"] if a.get("id") == item_id), None)

@@ -10,14 +10,16 @@ const app = {
 
 const AGENCY_OPS_ROLE_ID = "role_us_agency_ops";
 const MEETING_HOST_ROLE_ID = "role_meeting_host";
+const CN_ADMIN_ROLE_ID = "role_cn_admin";
 
 const pages = [
   ["dashboard", "周会首页"],
   ["meetings", "会议列表"],
-  ["report", "美国代运营周报填写"],
+  ["report", "美国代运营每周报表填写"],
   ["notes", "会前备注"],
   ["transcripts", "会议文字记录"],
-  ["actions", "行动项"],
+  ["action_manage", "行动项管理"],
+  ["my_actions", "我的行动项"],
   ["admin", "管理员"],
 ];
 
@@ -171,7 +173,7 @@ function canFillAgencyReport() {
 }
 
 function canManageActions() {
-  return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID);
+  return ["admin", "manager"].includes(app.user?.role) || hasBusinessRole(MEETING_HOST_ROLE_ID) || hasBusinessRole(CN_ADMIN_ROLE_ID);
 }
 
 function isAgencyOnlyUser(user = app.user) {
@@ -179,8 +181,12 @@ function isAgencyOnlyUser(user = app.user) {
   return roleIds.includes(AGENCY_OPS_ROLE_ID) && !roleIds.some((roleId) => roleId !== AGENCY_OPS_ROLE_ID);
 }
 
-function canViewTranscripts() {
+function canViewRawTranscripts() {
   return canManageActions() || !isAgencyOnlyUser();
+}
+
+function canViewTranscripts() {
+  return Boolean(app.user);
 }
 
 function userDisplayName(user) {
@@ -405,30 +411,54 @@ function meetingName(id) {
   return meeting ? meeting.title : id || "";
 }
 
-function currentMeeting() {
-  const meetings = [...(app.data?.meetings || [])];
-  return meetings.find((m) => m.status !== "已开会") || meetings[meetings.length - 1] || null;
-}
-
-function previousMeeting() {
-  const meetings = [...(app.data?.meetings || [])];
-  const current = currentMeeting();
-  const index = meetings.findIndex((m) => m.id === current?.id);
-  return meetings[index - 1] || meetings.find((m) => m.status === "已开会") || null;
-}
-
 function meetingTimestamp(meeting) {
   if (!meeting?.us_date) return 0;
   const value = new Date(`${meeting.us_date}T${meeting.us_time || "23:59"}:00`).getTime();
   return Number.isNaN(value) ? 0 : value;
 }
 
+function sortedMeetingsByTime() {
+  return [...(app.data?.meetings || [])].sort((a, b) => {
+    const timeA = meetingTimestamp(a);
+    const timeB = meetingTimestamp(b);
+    if (timeA && timeB && timeA !== timeB) return timeA - timeB;
+    if (timeA && !timeB) return -1;
+    if (!timeA && timeB) return 1;
+    return String(a.title || a.id || "").localeCompare(String(b.title || b.id || ""));
+  });
+}
+
+function currentMeeting() {
+  const meetings = sortedMeetingsByTime();
+  const now = Date.now();
+  const next = meetings.find((meeting) => meetingTimestamp(meeting) && meetingTimestamp(meeting) >= now);
+  if (next) return next;
+  return [...meetings].reverse().find((meeting) => meetingTimestamp(meeting)) || meetings[meetings.length - 1] || null;
+}
+
+function previousMeeting() {
+  const meetings = sortedMeetingsByTime();
+  const current = currentMeeting();
+  const currentTime = meetingTimestamp(current);
+  if (currentTime) {
+    const previous = [...meetings].reverse().find((meeting) => meeting.id !== current?.id && meetingTimestamp(meeting) && meetingTimestamp(meeting) < currentTime);
+    if (previous) return previous;
+  }
+  const index = meetings.findIndex((meeting) => meeting.id === current?.id);
+  return index > 0 ? meetings[index - 1] : null;
+}
+
 function lastOccurredMeeting() {
   const now = Date.now();
-  const meetings = [...(app.data?.meetings || [])];
+  const meetings = sortedMeetingsByTime();
   const past = meetings
-    .filter((meeting) => meeting.status === "已开会" || (meetingTimestamp(meeting) && meetingTimestamp(meeting) <= now))
+    .filter((meeting) => meetingTimestamp(meeting) && meetingTimestamp(meeting) <= now)
     .sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  if (past[0]) return past[0];
+  const statusPast = meetings
+    .filter((meeting) => meeting.status === "已开会")
+    .sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  if (statusPast[0]) return statusPast[0];
   return past[0] || previousMeeting() || currentMeeting();
 }
 
@@ -452,16 +482,33 @@ function transcriptRecordsFor(meetingId, part) {
     .sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")));
 }
 
+function latestTranscriptRecord(meetingId, part) {
+  return transcriptRecordsFor(meetingId, part)[0] || null;
+}
+
+function transcriptMinutesText(record) {
+  return record?.minutes_final || record?.minutes_draft || "";
+}
+
+function transcriptMinutesStatus(record) {
+  if (!record || record.part !== "part1") return "";
+  if (record.minutes_status === "final" && record.minutes_final) return "正式纪要";
+  if (record.minutes_draft) return "AI草稿";
+  return "未生成";
+}
+
 function transcriptPartStatusHtml(meetingId, part) {
   const records = transcriptRecordsFor(meetingId, part);
   if (!records.length) return '<span class="tag red">未上传</span>';
   const latest = records[0];
   const status = latest.parse_status === "failed"
     ? '<span class="tag red">需重新上传</span>'
-    : '<span class="tag green">已上传</span>';
+    : part === "part1"
+      ? `<span class="tag ${latest.minutes_status === "final" ? "green" : "amber"}">${escapeHtml(transcriptMinutesStatus(latest))}</span>`
+      : '<span class="tag green">已上传</span>';
   return `
     ${status}
-    <button class="plain-btn view-transcript" data-id="${escapeHtml(latest.id)}">查看最新</button>
+    <button class="plain-btn view-transcript" data-id="${escapeHtml(latest.id)}">${part === "part1" ? "查看纪要" : "查看最新"}</button>
     <div class="muted">${escapeHtml(latest.original_filename || latest.title || "")}</div>
     ${latest.parse_message ? `<div class="message error">${escapeHtml(latest.parse_message)}</div>` : ""}
   `;
@@ -566,6 +613,7 @@ function renderAppShell() {
     if (key === "admin") return app.user?.role === "admin";
     if (key === "report") return canFillAgencyReport();
     if (key === "transcripts") return canViewTranscripts();
+    if (key === "action_manage") return canManageActions();
     return true;
   });
   qs("#nav").innerHTML = visiblePages
@@ -585,7 +633,8 @@ function renderPage() {
   if (app.page === "report") renderReport();
   if (app.page === "notes") renderNotes();
   if (app.page === "transcripts") renderTranscripts();
-  if (app.page === "actions") renderActions();
+  if (app.page === "action_manage") renderActionManage();
+  if (app.page === "my_actions") renderMyActions();
   if (app.page === "admin") renderAdmin();
   renderAppShellNavOnly();
 }
@@ -615,6 +664,92 @@ async function loadMe() {
   scrollToPageTop();
 }
 
+function agencyReportPersonIds() {
+  const ids = (app.data.users || [])
+    .filter((u) => (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID))
+    .map((u) => u.person_id)
+    .filter(Boolean);
+  if (ids.length) return [...new Set(ids)];
+  const fallbackKyle = (app.data.people || []).find((p) => p.id === "person_kyle") || {};
+  return fallbackKyle.id ? [fallbackKyle.id] : [];
+}
+
+function agencyReports() {
+  const reportPersonIds = agencyReportPersonIds();
+  return (app.data.weekly_reports || [])
+    .filter((report) => reportPersonIds.includes(report.person_id))
+    .sort((a, b) => meetingTimestamp((app.data.meetings || []).find((m) => m.id === b.meeting_id)) - meetingTimestamp((app.data.meetings || []).find((m) => m.id === a.meeting_id)));
+}
+
+function reportNumericValue(report, key) {
+  const raw = String(report?.fields?.[key] || "").replace(/,/g, "");
+  const value = Number(raw.replace(/[^\d.-]/g, ""));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function weeklyReportCompareHtml(reports) {
+  const rows = reports.slice().reverse().slice(-8);
+  if (!rows.length) return `<p class="muted">暂无已保存的美国代运营每周报表，保存后这里会出现对比。</p>`;
+  const metrics = [
+    ["total_gmv", "总GMV", "$"],
+    ["total_orders", "订单量", ""],
+    ["live_gmv", "直播GMV", "$"],
+    ["non_live_gmv", "非直播GMV", "$"],
+    ["affiliate_gmv", "达人GMV", "$"],
+  ];
+  return `
+    <div class="compare-grid">
+      ${metrics.map(([key, label, prefix]) => {
+        const max = Math.max(...rows.map((report) => reportNumericValue(report, key)), 1);
+        return `
+          <div class="compare-card">
+            <h3>${escapeHtml(label)}</h3>
+            ${rows.map((report) => {
+              const value = reportNumericValue(report, key);
+              const pct = Math.max(3, Math.round((value / max) * 100));
+              return `
+                <div class="compare-row">
+                  <span>${escapeHtml(meetingName(report.meeting_id).replace(" Kicksgo 周会", ""))}</span>
+                  <div class="compare-bar"><i style="width:${pct}%"></i></div>
+                  <strong>${escapeHtml(value ? `${prefix}${value}` : "-")}</strong>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function agencyReportHistoryHtml(reports) {
+  if (!reports.length) return `<tr><td colspan="5" class="muted">暂无历史报表</td></tr>`;
+  return reports.map((report) => `
+    <tr>
+      <td>${escapeHtml(meetingName(report.meeting_id))}</td>
+      <td>${escapeHtml(personName(report.person_id))}</td>
+      <td>${escapeHtml(report.fields?.total_gmv || "-")}</td>
+      <td>${escapeHtml(report.updated_at || report.created_at || "")}</td>
+      <td><button type="button" class="plain-btn open-agency-report" data-meeting-id="${escapeHtml(report.meeting_id || "")}" data-person-id="${escapeHtml(report.person_id || "")}">查看</button></td>
+    </tr>
+  `).join("");
+}
+
+function previousPart1MinutesHtml(previousMeetingRecord) {
+  const record = previousMeetingRecord ? latestTranscriptRecord(previousMeetingRecord.id, "part1") : null;
+  const minutes = transcriptMinutesText(record);
+  if (!record) {
+    return `<p class="muted">上周第一段会议文字还没有上传，上传后这里会显示 AI 会议纪要。</p>`;
+  }
+  return `
+    <div class="section-title compact-section-title">
+      <span class="tag ${record.minutes_status === "final" ? "green" : "amber"}">${escapeHtml(transcriptMinutesStatus(record))}</span>
+      <button type="button" class="plain-btn view-transcript" data-id="${escapeHtml(record.id)}">打开纪要</button>
+    </div>
+    <pre class="minutes-preview">${escapeHtml(minutes || "已上传，但还没有生成纪要。")}</pre>
+  `;
+}
+
 function renderDashboard() {
   const meeting = currentMeeting();
   const prev = previousMeeting();
@@ -623,12 +758,8 @@ function renderDashboard() {
   const transcripts = app.data.transcript_uploads || [];
   const actions = app.data.action_items || [];
   const notes = app.data.pre_meeting_notes || [];
-  const agencyPersonIds = (app.data.users || [])
-    .filter((u) => (u.business_role_ids || []).includes(AGENCY_OPS_ROLE_ID))
-    .map((u) => u.person_id)
-    .filter(Boolean);
-  const fallbackKyle = (app.data.people || []).find((p) => p.id === "person_kyle") || {};
-  const reportPersonIds = agencyPersonIds.length ? agencyPersonIds : [fallbackKyle.id].filter(Boolean);
+  const reportPersonIds = agencyReportPersonIds();
+  const historyReports = agencyReports();
   const report = reports.find((r) => r.meeting_id === meeting?.id && reportPersonIds.includes(r.person_id));
   const reportStatus = report ? "已填写" : meeting?.kyle_report_required ? "待填写" : "不强制";
   const reportAction = report
@@ -638,57 +769,86 @@ function renderDashboard() {
       : "";
   const part1Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part1");
   const part2Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part2");
-  setTitle("周会首页", "下次会议、两段腾讯会议链接、美国代运营周报状态、文字记录上传状态和第二部分流程。");
+  const previousActions = actions.filter((a) => a.meeting_id === prev?.id);
+  setTitle("周会首页", "腾讯会议设置、美国代运营周会、内部经营复盘流程。");
   qs("#content").innerHTML = `
     <div class="grid">
       <div class="panel">
         <div class="section-title">
           <div>
-            <h2>${escapeHtml(meeting?.title || "暂无会议")}</h2>
+            <h2>一、腾讯会议设置和显示</h2>
             <p class="muted">美国时间 ${escapeHtml(meeting?.us_date || "")} ${escapeHtml(meeting?.us_time || "")} / 中国时间 ${escapeHtml(meeting?.cn_date || "")} ${escapeHtml(meeting?.cn_time || "")}</p>
           </div>
           <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
         </div>
         <div class="metric-row">
-          <div class="metric"><span>美国代运营周报</span><strong>${reportStatus}</strong>${reportAction}</div>
+          <div class="metric"><span>下次周会</span><strong>${escapeHtml(meeting?.title || "暂无会议")}</strong></div>
           <div class="metric"><span>第1段文字记录</span><strong>${transcriptMetricText(part1Uploaded, meeting)}</strong></div>
           <div class="metric"><span>第2段文字记录</span><strong>${transcriptMetricText(part2Uploaded, meeting)}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
         </div>
+        <div class="link-list dashboard-links">
+          ${links.map((link) => `
+            <div class="meeting-link">
+              <strong>${escapeHtml(link.title)}</strong>
+              <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
+              <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
+            </div>
+          `).join("") || '<div class="muted">暂未设置固定腾讯会议链接</div>'}
+        </div>
         <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
       </div>
 
-      <div class="grid two">
-        <div class="panel">
-          <h2>固定腾讯会议链接</h2>
-          <div class="link-list">
-            ${links.map((link) => `
-              <div class="meeting-link">
-                <strong>${escapeHtml(link.title)}</strong>
-                <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
-                <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
-              </div>
-            `).join("")}
+      <div class="panel">
+        <div class="section-title">
+          <div>
+            <h2>二、美国代运营周会</h2>
+            <p class="muted">第一段会议围绕美国代运营每周报表和上周第一段会议纪要展开。</p>
+          </div>
+          <button type="button" class="plain-btn" id="toggleWeeklyCompare">每周对比</button>
+        </div>
+        <div class="grid two">
+          <div>
+            <h3>上周第一段会议纪要</h3>
+            ${previousPart1MinutesHtml(prev)}
+          </div>
+          <div>
+            <h3>美国代运营每周报表</h3>
+            <div class="metric-row two-metrics">
+              <div class="metric"><span>本周填写状态</span><strong>${reportStatus}</strong>${reportAction}</div>
+              <div class="metric"><span>历史报表</span><strong>${historyReports.length} 份</strong></div>
+            </div>
+            <div class="table-wrap compact-table-wrap">
+              <table>
+                <thead><tr><th>会议</th><th>填写人</th><th>GMV</th><th>更新时间</th><th>操作</th></tr></thead>
+                <tbody>${agencyReportHistoryHtml(historyReports)}</tbody>
+              </table>
+            </div>
           </div>
         </div>
-        <div class="panel">
-          <h2>上周行动项状态参考</h2>
-          <p class="hint">各业务板块发言时先讲自己名下行动项状态：是否完成；未完成什么时候完成、需要谁配合。主持人最后统一总结。</p>
+        <div id="agencyReportCompare" class="compare-panel hidden">
+          <h3>美国代运营每周报表对比</h3>
+          ${weeklyReportCompareHtml(historyReports)}
+        </div>
+        <div id="transcriptViewer" class="panel transcript-viewer nested-viewer hidden"></div>
+      </div>
+
+      <div class="panel">
+        <h2>三、内部经营复盘会流程</h2>
+        <div class="agenda-action-reference">
+          <h3>上周行动项状态参考</h3>
+          <p class="hint">放在第二部分流程里看。各业务板块发言时先讲自己名下行动项状态：是否完成；未完成什么时候完成、需要谁配合。主持人最后统一总结。</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>事项</th><th>负责人</th><th>状态</th><th>截止</th></tr></thead>
               <tbody>
-                ${actions.filter((a) => a.meeting_id === prev?.id).slice(0, 8).map((a) => `
+                ${previousActions.slice(0, 10).map((a) => `
                   <tr><td>${escapeHtml(a.title)}</td><td>${escapeHtml(personName(a.owner_person_id) || a.owner_text)}</td><td>${escapeHtml(a.status)}</td><td>${escapeHtml(a.due_date)}</td></tr>
                 `).join("") || '<tr><td colspan="4" class="muted">暂无上周行动项</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
-      </div>
-
-      <div class="panel">
-        <h2>第二部分：内部经营复盘会流程</h2>
         <div class="agenda">
           ${part2Agenda.map((row) => `
             <div class="agenda-row">
@@ -707,6 +867,12 @@ function renderDashboard() {
   `;
   document.querySelectorAll(".open-agency-report").forEach((btn) => {
     btn.addEventListener("click", () => openAgencyReport(btn.dataset.meetingId, btn.dataset.personId));
+  });
+  document.querySelectorAll(".view-transcript").forEach((btn) => {
+    btn.addEventListener("click", () => viewTranscript(btn.dataset.id));
+  });
+  qs("#toggleWeeklyCompare")?.addEventListener("click", () => {
+    qs("#agencyReportCompare")?.classList.toggle("hidden");
   });
 }
 
@@ -742,7 +908,7 @@ function renderMeetings() {
         <div class="metric-row">
           <div class="metric"><span>美国时间</span><strong>${escapeHtml(`${meeting?.us_date || "-"} ${meeting?.us_time || ""}`)}</strong></div>
           <div class="metric"><span>中国时间</span><strong>${escapeHtml(`${meeting?.cn_date || "-"} ${meeting?.cn_time || ""}`)}</strong></div>
-          <div class="metric"><span>美国代运营周报</span><strong>${meeting?.kyle_report_required ? "必填" : "不强制"}</strong></div>
+          <div class="metric"><span>美国代运营每周报表</span><strong>${meeting?.kyle_report_required ? "必填" : "不强制"}</strong></div>
           <div class="metric"><span>会议状态</span><strong>${escapeHtml(meeting?.status || "-")}</strong></div>
         </div>
         <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
@@ -752,7 +918,7 @@ function renderMeetings() {
         <h2>每周会议档案</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营周报</th><th>备注</th></tr></thead>
+            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营每周报表</th><th>备注</th></tr></thead>
             <tbody>
               ${meetings.map((m) => `
                 <tr>
@@ -810,7 +976,7 @@ function renderReport() {
     : (canEditReport ? app.user.person_id : defaultPersonId);
   const report = (app.data.weekly_reports || []).find((r) => r.meeting_id === meeting?.id && r.person_id === selectedPerson) || { fields: {} };
   const fields = report.fields || {};
-  setTitle("美国代运营周报", canEditReport ? "美国代运营角色会前填写直营店周报；其他人可查看完成后的内容。" : "查看美国代运营完成后的第一部分周报内容。");
+  setTitle("美国代运营每周报表", canEditReport ? "美国代运营角色会前填写直营店每周报表；其他人可查看完成后的内容。" : "查看美国代运营完成后的第一部分报表内容。");
   qs("#content").innerHTML = `
     <form id="reportForm" class="grid">
       <div class="panel">
@@ -962,26 +1128,36 @@ async function saveNote(event) {
 }
 
 function renderTranscripts() {
-  if (!canViewTranscripts()) {
-    setTitle("会议文字记录", "美国代运营账号不能查看会议文字记录归档。");
-    qs("#content").innerHTML = `<div class="panel"><h2>无权限查看</h2><p class="muted">美国代运营账号只能查看已生成的第一部分会议纪要，不能查看上传的原始会议文字记录。</p></div>`;
-    return;
-  }
   const uploadMeeting = lastOccurredMeeting();
   const records = app.data.transcript_uploads || [];
   const canUpload = canManageActions();
+  const canRaw = canViewRawTranscripts();
   const subtitle = canUpload
-    ? "上传腾讯会议导出的文字记录；如果文字里写到第一部分凯尔/代运营结束，系统会自动拆成两段保存。"
-    : "查看当前账号有权限访问的会议纪要。美国代运营角色只能看到第一部分。";
+    ? "上传腾讯会议导出的文字记录；第一段生成会议纪要，第二段生成行动项初稿。"
+    : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
   setTitle("会议文字记录", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
       <form id="transcriptForm" class="panel">
         <h2>上传腾讯会议文字记录</h2>
+        <div class="guidance-box">
+          <div>
+            <strong>上传第一段：美国代运营会议</strong>
+            <span>系统只提炼 AI 会议纪要草稿，不生成行动项。管理员或主持人确认后保存成正式纪要；美国代运营账号可以查看这份纪要。</span>
+          </div>
+          <div>
+            <strong>上传第二段：内部经营复盘</strong>
+            <span>系统生成行动项初稿，管理员或主持人逐行修改、删除、新增后，再生成正式行动项分发给负责人。</span>
+          </div>
+          <div>
+            <strong>上传完整文字</strong>
+            <span>如果文字里出现“第一部分凯尔/代运营结束”等断点，系统会自动拆分 Part 1 和 Part 2；同一会议同一段再次上传会覆盖旧版本。</span>
+          </div>
+        </div>
         <div class="form-grid two">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id)}</select></label>
-          <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营周报</option><option value="part2">Part 2：内部经营复盘</option></select></label>
+          <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营每周报表</option><option value="part2">Part 2：内部经营复盘</option></select></label>
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
           <label class="field-wide">文字记录内容<textarea name="content" required></textarea></label>
@@ -990,7 +1166,7 @@ function renderTranscripts() {
           <button type="submit">上传保存</button>
           <span id="transcriptMessage" class="message"></span>
         </div>
-        <p class="hint" style="margin-top:10px">提示：可以上传完整会议文字；出现“第一部分凯尔的结束了”等断点时，会自动把前面保存为 Part 1，后面保存为 Part 2。</p>
+        <p class="hint" style="margin-top:10px">默认会议是最近一次已经开过的周会；首页、会前备注和周报填写默认看下一场周会。</p>
       </form>` : ""}
       <div class="panel">
         <h2>每周会议文字记录归档</h2>
@@ -1003,7 +1179,7 @@ function renderTranscripts() {
         </div>
       </div>
       <div class="panel">
-        <h2>${canUpload ? "已上传记录" : "可查看会议纪要"}</h2>
+        <h2>${canRaw ? "已上传记录" : "可查看会议纪要"}</h2>
         <div class="table-wrap">
           <table>
             <thead><tr><th>会议</th><th>段落</th><th>文件</th><th>字数</th><th>说话人匹配</th><th>未匹配说话人</th><th>提到人员</th><th>提到角色</th><th>内容</th><th>时间</th></tr></thead>
@@ -1018,7 +1194,7 @@ function renderTranscripts() {
                   <td>${(r.unmatched_speakers || []).map((s) => escapeHtml(s.speaker)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.mentioned_people || []).slice(0, 8).map((p) => escapeHtml(`${p.person_name}（${p.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
                   <td>${(r.mentioned_roles || []).slice(0, 8).map((role) => escapeHtml(`${role.role_name}（${role.count}）`)).join("<br>") || '<span class="muted">-</span>'}</td>
-                  <td><button class="plain-btn view-transcript" data-id="${escapeHtml(r.id)}">查看</button></td>
+                  <td><button class="plain-btn view-transcript" data-id="${escapeHtml(r.id)}">${r.part === "part1" ? "查看纪要" : "查看"}</button></td>
                   <td>${escapeHtml(r.uploaded_at || "")}</td>
                 </tr>
               `).join("") || '<tr><td colspan="10" class="muted">暂无可查看记录</td></tr>'}
@@ -1058,11 +1234,23 @@ async function saveTranscript(event) {
   try {
     const res = await api("/api/transcripts/upload", { method: "POST", body });
     app.pendingTranscriptFile = null;
-    (res.records || []).forEach((record) => upsertById("transcript_uploads", record));
-    (res.action_drafts || []).forEach((draft) => upsertById("action_drafts", draft));
+    (res.records || []).forEach((record) => {
+      app.data.transcript_uploads = (app.data.transcript_uploads || [])
+        .filter((old) => !(old.meeting_id === record.meeting_id && old.part === record.part));
+      upsertById("transcript_uploads", record);
+    });
+    (res.action_drafts || []).forEach((draft) => {
+      app.data.action_drafts = (app.data.action_drafts || [])
+        .filter((old) => !(old.meeting_id === draft.meeting_id && old.part === draft.part && old.status !== "已确认生成行动项"));
+      upsertById("action_drafts", draft);
+    });
     const draftItemCount = (res.action_drafts || []).reduce((sum, draft) => sum + (draft.items || []).length, 0);
+    const savedParts = [];
+    if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("Part 1 已生成 AI 会议纪要草稿");
+    if (draftItemCount) savedParts.push(`Part 2 已生成 ${draftItemCount} 条行动项初稿`);
+    if ((res.replaced || []).length) savedParts.push("同会议同段旧版本已覆盖");
     renderTranscripts();
-    setTimeout(() => showMessage("#transcriptMessage", `已上传保存，并生成 ${draftItemCount} 条行动项初稿`, true), 0);
+    setTimeout(() => showMessage("#transcriptMessage", savedParts.join("；") || "已上传保存", true), 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
   } finally {
@@ -1078,7 +1266,10 @@ async function viewTranscript(id) {
   try {
     const res = await api(`/api/transcripts/${encodeURIComponent(id)}`);
     const record = res.record || {};
-    const partLabel = record.part === "part1" ? "Part 1：美国代运营周报" : "Part 2：内部经营复盘";
+    const partLabel = record.part === "part1" ? "Part 1：美国代运营每周报表" : "Part 2：内部经营复盘";
+    const minutes = transcriptMinutesText(record);
+    const canEditMinutes = canManageActions() && record.part === "part1";
+    const rawContent = res.content || "";
     viewer.innerHTML = `
       <div class="section-title">
         <div>
@@ -1088,11 +1279,51 @@ async function viewTranscript(id) {
         <span class="tag">${escapeHtml(record.char_count || 0)} 字</span>
       </div>
       ${record.split_marker ? `<p class="hint">自动断点：${escapeHtml(record.split_marker)}</p>` : ""}
-      <pre class="transcript-content">${escapeHtml(res.content || "")}</pre>
+      ${record.part === "part1" ? `
+        <div class="minutes-box">
+          <div class="section-title compact-section-title">
+            <h3>第一段会议纪要</h3>
+            <span class="tag ${record.minutes_status === "final" ? "green" : "amber"}">${escapeHtml(transcriptMinutesStatus(record))}</span>
+          </div>
+          ${canEditMinutes ? `
+            <textarea id="minutesText" class="minutes-editor">${escapeHtml(minutes || "")}</textarea>
+            <div class="split-actions" style="margin-top:10px">
+              <button type="button" class="save-minutes" data-id="${escapeHtml(record.id)}">保存为正式纪要</button>
+              <span id="minutesMessage" class="message"></span>
+            </div>
+          ` : `<pre class="minutes-preview">${escapeHtml(minutes || "暂未生成会议纪要。")}</pre>`}
+        </div>
+      ` : ""}
+      ${rawContent ? `
+        <h3>${record.part === "part1" ? "原始会议文字" : "会议文字记录"}</h3>
+        <pre class="transcript-content">${escapeHtml(rawContent)}</pre>
+      ` : record.part === "part1" ? '<p class="hint">当前账号只能查看第一段会议纪要，原始会议文字仅管理员、会议主持人和国内行政可见。</p>' : ""}
     `;
+    viewer.querySelector(".save-minutes")?.addEventListener("click", () => saveTranscriptMinutes(record.id));
     viewer.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     viewer.innerHTML = `<h2>无法查看</h2><p class="message error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+async function saveTranscriptMinutes(id) {
+  const textarea = qs("#minutesText");
+  if (!textarea) return;
+  const button = qs(".save-minutes");
+  const done = setBusy(button, "保存中...");
+  showMessage("#minutesMessage", "正在保存正式纪要...", true);
+  try {
+    const res = await api("/api/transcripts/minutes/save", {
+      method: "POST",
+      body: { transcript_id: id, minutes: textarea.value },
+    });
+    upsertById("transcript_uploads", res.record);
+    await viewTranscript(id);
+    showMessage("#minutesMessage", "正式纪要已保存", true);
+  } catch (err) {
+    showMessage("#minutesMessage", err.message);
+  } finally {
+    done();
   }
 }
 
@@ -1170,32 +1401,39 @@ function renderActionDrafts(drafts) {
   `).join("");
 }
 
-function renderActions() {
+function actionRowsHtml(items, canDelete = false) {
+  return items.map((a) => `
+    <tr>
+      <td>${escapeHtml(meetingName(a.meeting_id))}</td>
+      <td>${escapeHtml(a.title)}</td>
+      <td>${escapeHtml(personName(a.owner_person_id) || a.owner_text)}</td>
+      <td>${escapeHtml(a.priority)}</td>
+      <td>${escapeHtml(a.status)}</td>
+      <td>${escapeHtml(a.due_date)}</td>
+      <td>${canDelete ? `<button class="plain-btn danger-text delete-action" data-id="${a.id}">删除</button>` : ""}</td>
+    </tr>
+  `).join("");
+}
+
+function renderActionManage() {
+  if (!canManageActions()) {
+    app.page = "my_actions";
+    renderPage();
+    return;
+  }
   const actions = app.data.action_items || [];
-  const drafts = (app.data.action_drafts || []).filter((draft) => draft.status !== "已确认生成行动项");
-  const canEdit = canManageActions();
-  const visibleActions = canEdit ? actions : actions.filter((a) => a.owner_person_id === app.user?.person_id);
-  setTitle(canEdit ? "会议行动项" : "我的本周落实行动项目", canEdit ? "上传会议文字后先生成初稿，管理员或主持人确认后再分发给负责人。" : "这里只显示已经落实到你名下的正式行动项。");
+  const drafts = (app.data.action_drafts || []).filter((draft) => draft.status !== "已确认生成行动项" && draft.part !== "part1");
+  setTitle("行动项管理", "只有管理员、会议主持人、国内行政可以管理行动项；第二段会议文字会生成行动项初稿。");
   qs("#content").innerHTML = `
     <div class="grid">
-      ${canEdit ? renderActionDrafts(drafts) : ""}
+      ${renderActionDrafts(drafts)}
       <div class="panel">
-        <h2>${canEdit ? "正式行动项列表" : "我的本周落实行动项目"}</h2>
+        <h2>正式行动项列表</h2>
         <div class="table-wrap">
           <table>
             <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
             <tbody>
-              ${visibleActions.map((a) => `
-                <tr>
-                  <td>${escapeHtml(meetingName(a.meeting_id))}</td>
-                  <td>${escapeHtml(a.title)}</td>
-                  <td>${escapeHtml(personName(a.owner_person_id) || a.owner_text)}</td>
-                  <td>${escapeHtml(a.priority)}</td>
-                  <td>${escapeHtml(a.status)}</td>
-                  <td>${escapeHtml(a.due_date)}</td>
-                  <td>${canEdit ? `<button class="plain-btn danger-text delete-action" data-id="${a.id}">删除</button>` : ""}</td>
-                </tr>
-              `).join("") || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
+              ${actionRowsHtml(actions, true) || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -1208,6 +1446,35 @@ function renderActions() {
   document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
   document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
   document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
+}
+
+function renderMyActions() {
+  const mine = (app.data.action_items || []).filter((a) => a.owner_person_id === app.user?.person_id);
+  const openItems = mine.filter((a) => a.status !== "已完成");
+  const historyItems = mine.filter((a) => a.status === "已完成");
+  setTitle("我的行动项", "查看本周自己负责的行动项，以及历史已经完成或归档的行动项。");
+  qs("#content").innerHTML = `
+    <div class="grid">
+      <div class="panel">
+        <h2>本周自己责任行动项</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+            <tbody>${actionRowsHtml(openItems, false) || '<tr><td colspan="7" class="muted">暂无本周待落实行动项</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>历史自己责任行动项</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+            <tbody>${actionRowsHtml(historyItems, false) || '<tr><td colspan="7" class="muted">暂无历史行动项</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function draftCardFromButton(button) {
@@ -1293,7 +1560,7 @@ async function saveActionDraftFromCard(card, button, busyText = "保存中...", 
   try {
     const res = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
     upsertById("action_drafts", res.draft);
-    renderActions();
+    renderActionManage();
     setTimeout(() => showDraftMessage(res.draft?.id || draftId, successText, true), 0);
   } catch (err) {
     showDraftCardMessage(card, err.message);
@@ -1319,7 +1586,7 @@ async function approveActionDraft(button) {
     const res = await api("/api/action-drafts/approve", { method: "POST", body: { draft_id: targetDraftId } });
     upsertById("action_drafts", res.draft);
     (res.actions || []).forEach((action) => upsertById("action_items", action));
-    renderActions();
+    renderActionManage();
   } catch (err) {
     showDraftCardMessage(card, err.message);
   } finally {
@@ -1332,7 +1599,7 @@ async function deleteAction(id) {
   try {
     await api("/api/actions/delete", { method: "POST", body: { id } });
     app.data.action_items = (app.data.action_items || []).filter((item) => item.id !== id);
-    renderActions();
+    renderActionManage();
   } catch (err) {
     alert(err.message);
   }
@@ -1374,7 +1641,7 @@ function renderAdmin() {
       <div class="panel">
         <h2>第一部分任务</h2>
         <p class="hint">美国代运营角色负责填写；管理员和其他成员可进入查看已完成周报。</p>
-        <button type="button" class="plain-btn go-report-page">查看美国代运营周报</button>
+        <button type="button" class="plain-btn go-report-page">查看美国代运营每周报表</button>
       </div>
 
       <form id="createUserForm" class="panel">
