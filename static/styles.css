@@ -631,18 +631,19 @@ p {
 }
 
 .compact-upload-panel {
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .compact-upload-panel h2 {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  font-size: 16px;
 }
 
 .compact-upload-hint {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.45;
 }
 
 .compact-upload-grid {
@@ -650,7 +651,8 @@ p {
 }
 
 .compact-upload-textarea {
-  min-height: 70px;
+  min-height: 56px;
+  max-height: 150px;
 }
 
 .inline-action-tip {
@@ -1109,16 +1111,18 @@ tr:last-child td {
 }
 
 .draft-table textarea {
-  min-height: 92px;
-  line-height: 1.55;
+  min-height: 112px;
+  line-height: 1.6;
+  resize: vertical;
 }
 
 .draft-table .draft-title {
-  min-height: 104px;
+  min-height: 120px;
+  color: var(--text);
 }
 
 .draft-table .draft-notes {
-  min-height: 104px;
+  min-height: 120px;
   color: var(--muted);
 }
 
@@ -1127,7 +1131,7 @@ tr:last-child td {
 }
 
 .draft-col-title {
-  width: 500px;
+  width: 540px;
 }
 
 .draft-col-owner {
@@ -1147,11 +1151,11 @@ tr:last-child td {
 }
 
 .draft-col-notes {
-  width: 460px;
+  width: 520px;
 }
 
 .draft-col-actions {
-  width: 170px;
+  width: 190px;
 }
 
 .draft-table .row-index {

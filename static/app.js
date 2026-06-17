@@ -1366,7 +1366,7 @@ function renderMeetingOps() {
       ${canUpload ? `
       <form id="transcriptForm" class="panel compact-upload-panel">
         <h2>上传腾讯会议文字记录</h2>
-        <p class="compact-upload-hint">第一段上传后生成会议纪要草稿；第二段上传后生成行动项初稿；同一会议同一段再次上传会覆盖旧版本。默认选择最近一次已经开过的会议。</p>
+        <p class="compact-upload-hint">默认选最近一次已开会议。Part 1 生成纪要草稿；Part 2 生成行动项草稿；同一会议同一段再次上传会覆盖旧版。</p>
         <div class="form-grid two compact-upload-grid">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
           <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营每周报表</option><option value="part2">Part 2：内部经营复盘</option></select></label>
@@ -1378,7 +1378,6 @@ function renderMeetingOps() {
           <button type="submit">上传保存</button>
           <span id="transcriptMessage" class="message"></span>
         </div>
-        <p class="hint" style="margin-top:10px">默认会议是最近一次已经开过的周会；首页、会前备注和周报填写默认看下一场周会。</p>
       </form>` : ""}
       <div class="panel">
         <h2>每周会议文字记录归档</h2>
@@ -1423,6 +1422,7 @@ function renderMeetingOps() {
         ${renderActionDrafts(actionDrafts)}
         <div class="panel">
           <h2>已发布行动项</h2>
+          <p class="hint">正式行动项的内容从上方对应草稿修改，再点“保存正式发布”同步更新到负责人。这里保留删除入口，避免两套地方同时改造成混乱。</p>
           <div class="table-wrap published-action-table">
             <table>
               <colgroup>
@@ -1685,6 +1685,9 @@ function actionRowsHtml(items, canEdit = false) {
 }
 
 function publishedActionRowHtml(a) {
+  const draftButton = a.source_draft_id
+    ? `<button type="button" class="plain-btn jump-source-draft" data-draft-id="${escapeHtml(a.source_draft_id)}">改草稿</button>`
+    : "";
   return `
     <tr class="published-action-row" data-id="${escapeHtml(a.id || "")}">
       <td>${escapeHtml(meetingName(a.meeting_id))}</td>
@@ -1696,6 +1699,7 @@ function publishedActionRowHtml(a) {
       <td><div class="action-note-cell">${escapeHtml(actionNotesText(a))}</div></td>
       <td>
         <div class="draft-row-actions">
+          ${draftButton}
           <button type="button" class="plain-btn danger-text delete-action" data-id="${escapeHtml(a.id || "")}">删除</button>
         </div>
       </td>
@@ -1716,6 +1720,7 @@ function wireActionManagement() {
   document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
   document.querySelectorAll(".save-published-action").forEach((btn) => btn.addEventListener("click", () => savePublishedAction(btn)));
   document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
+  document.querySelectorAll(".jump-source-draft").forEach((btn) => btn.addEventListener("click", () => jumpToSourceDraft(btn.dataset.draftId)));
 }
 
 function renderActionManageLegacy() {
@@ -1883,6 +1888,17 @@ async function saveActionDraftFromCard(card, button, busyText = "保存中...", 
 
 async function saveDraftRow(button) {
   await saveActionDraft(button, "保存中...", "该行修改已保存");
+}
+
+function jumpToSourceDraft(draftId) {
+  if (!draftId) return;
+  const card = document.querySelector(`.draft-card[data-draft-id="${CSS.escape(draftId)}"]`);
+  if (!card) {
+    alert("没有找到对应草稿，可能这条行动项是手动创建的。");
+    return;
+  }
+  markAttention(card, "attention-panel");
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function approveActionDraft(button) {
