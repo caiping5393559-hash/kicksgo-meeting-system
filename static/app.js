@@ -508,6 +508,35 @@ function transcriptMinutesStatus(record) {
   return "未生成";
 }
 
+function minutesReaders(recordId) {
+  const latestByUser = new Map();
+  (app.data?.minutes_view_logs || [])
+    .filter((log) => log.transcript_id === recordId)
+    .forEach((log) => {
+      const key = log.user_id || log.person_id || log.username || log.id;
+      const current = latestByUser.get(key);
+      if (!current || String(log.viewed_at || "") > String(current.viewed_at || "")) {
+        latestByUser.set(key, log);
+      }
+    });
+  return [...latestByUser.values()].sort((a, b) => String(b.viewed_at || "").localeCompare(String(a.viewed_at || "")));
+}
+
+function minutesReadersHtml(recordId) {
+  const readers = minutesReaders(recordId);
+  if (!readers.length) return `<p class="muted small-note">暂时还没有人打开查看完整会议纪要。</p>`;
+  return `
+    <div class="read-log-line">
+      <strong>已查看完整纪要：</strong>
+      ${readers.map((log) => `<span class="tag">${escapeHtml(personName(log.person_id) || log.username || "未知")} · ${escapeHtml(log.viewed_at || "")}</span>`).join("")}
+    </div>
+  `;
+}
+
+function actionNotesText(action) {
+  return action?.notes || [action?.time_type, action?.time_note].filter(Boolean).join("；") || "-";
+}
+
 function transcriptPartStatusHtml(meetingId, part) {
   const records = transcriptRecordsFor(meetingId, part);
   if (!records.length) return '<span class="tag red">未上传</span>';
@@ -788,6 +817,7 @@ function previousPart1MinutesHtml(previousMeetingRecord) {
       <button type="button" class="plain-btn view-transcript" data-id="${escapeHtml(record.id)}">打开纪要</button>
     </div>
     <pre class="minutes-preview">${escapeHtml(minutes || "已上传，但还没有生成纪要。")}</pre>
+    ${minutesReadersHtml(record.id)}
   `;
 }
 
@@ -818,12 +848,13 @@ function part1MinutesHistoryHtml() {
       <summary>历史第一段会议纪要</summary>
       <div class="table-wrap compact-table-wrap">
         <table>
-          <thead><tr><th>会议</th><th>纪要状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>会议</th><th>纪要状态</th><th>查看人数</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody>
             ${rows.map(({ meeting, record }) => `
               <tr>
                 <td>${escapeHtml(meeting.title || meeting.name || meeting.id)}</td>
                 <td><span class="tag ${record.minutes_status === "final" ? "green" : "amber"}">${escapeHtml(transcriptMinutesStatus(record))}</span></td>
+                <td>${minutesReaders(record.id).length} 人</td>
                 <td>${escapeHtml(record.minutes_updated_at || record.uploaded_at || "")}</td>
                 <td><button type="button" class="plain-btn view-transcript" data-id="${escapeHtml(record.id)}">查看纪要</button></td>
               </tr>
@@ -1365,11 +1396,12 @@ function renderMeetingOps() {
                 <col class="published-col-priority" />
                 <col class="published-col-status" />
                 <col class="published-col-due" />
+                <col class="published-col-notes" />
                 <col class="published-col-actions" />
               </colgroup>
-              <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+              <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th><th>操作</th></tr></thead>
               <tbody>
-                ${actionRowsHtml(actions, true) || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
+                ${actionRowsHtml(actions, true) || '<tr><td colspan="8" class="muted">暂无行动项</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -1450,6 +1482,7 @@ async function viewTranscript(id) {
   viewer.innerHTML = `<h2>正在读取会议纪要...</h2>`;
   try {
     const res = await api(`/api/transcripts/${encodeURIComponent(id)}`);
+    if (res.view_log) upsertById("minutes_view_logs", res.view_log);
     const record = res.record || {};
     const partLabel = record.part === "part1" ? "Part 1：美国代运营每周报表" : "Part 2：内部经营复盘";
     const minutes = transcriptMinutesText(record);
@@ -1587,7 +1620,7 @@ function renderActionDrafts(drafts) {
             <col class="draft-col-notes" />
             <col class="draft-col-actions" />
           </colgroup>
-          <thead><tr><th>#</th><th>事项</th><th>负责人</th><th>优先级</th><th>截止</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+          <thead><tr><th>#</th><th>事项</th><th>负责人</th><th>优先级</th><th>截止</th><th>状态</th><th>说明/时间判断</th><th>操作</th></tr></thead>
           <tbody>${(draft.items || []).map((item, index) => draftItemRowHtml(item, index)).join("") || '<tr><td colspan="8" class="muted">系统未识别到明确行动项，可以手动新增一行。</td></tr>'}</tbody>
         </table>
       </div>
@@ -1610,24 +1643,23 @@ function actionRowsHtml(items, canEdit = false) {
       <td>${escapeHtml(a.priority)}</td>
       <td>${escapeHtml(a.status)}</td>
       <td>${escapeHtml(a.due_date)}</td>
-      <td></td>
+      <td><div class="action-note-cell">${escapeHtml(actionNotesText(a))}</div></td>
     </tr>
   `).join("");
 }
 
 function publishedActionRowHtml(a) {
   return `
-    <tr class="published-action-row" data-id="${escapeHtml(a.id || "")}" data-meeting-id="${escapeHtml(a.meeting_id || "")}" data-part="${escapeHtml(a.part || "part2")}">
+    <tr class="published-action-row" data-id="${escapeHtml(a.id || "")}">
       <td>${escapeHtml(meetingName(a.meeting_id))}</td>
-      <td><textarea class="published-action-title compact-textarea">${escapeHtml(a.title || "")}</textarea></td>
-      <td><select class="published-action-owner">${registeredPersonOptions(a.owner_person_id || "", "待定")}</select></td>
-      <td><select class="published-action-priority compact-input">${actionPriorityOptions(a.priority || "P1-本周必须")}</select></td>
-      <td><select class="published-action-status compact-input">${actionStatusOptions(a.status || "未开始")}</select></td>
-      <td><input class="published-action-due" type="date" value="${escapeHtml(a.due_date || "")}" /></td>
+      <td>${escapeHtml(a.title || "")}</td>
+      <td>${escapeHtml(personName(a.owner_person_id) || a.owner_text || "待定")}</td>
+      <td>${escapeHtml(a.priority || "")}</td>
+      <td>${escapeHtml(a.status || "")}</td>
+      <td>${escapeHtml(a.due_date || "")}</td>
+      <td><div class="action-note-cell">${escapeHtml(actionNotesText(a))}</div></td>
       <td>
-        <input type="hidden" class="published-action-notes" value="${escapeHtml(a.notes || "")}" />
         <div class="draft-row-actions">
-          <button type="button" class="plain-btn save-published-action">修改</button>
           <button type="button" class="plain-btn danger-text delete-action" data-id="${escapeHtml(a.id || "")}">删除</button>
         </div>
       </td>
@@ -1666,9 +1698,9 @@ function renderActionManageLegacy() {
         <h2>正式行动项列表</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th><th>操作</th></tr></thead>
             <tbody>
-              ${actionRowsHtml(actions, true) || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
+              ${actionRowsHtml(actions, true) || '<tr><td colspan="8" class="muted">暂无行动项</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -1689,7 +1721,7 @@ function renderMyActions() {
         <h2>本周自己责任行动项</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th></tr></thead>
             <tbody>${actionRowsHtml(openItems, false) || '<tr><td colspan="7" class="muted">暂无本周待落实行动项</td></tr>'}</tbody>
           </table>
         </div>
@@ -1698,13 +1730,27 @@ function renderMyActions() {
         <h2>历史自己责任行动项</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+            <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th></tr></thead>
             <tbody>${actionRowsHtml(historyItems, false) || '<tr><td colspan="7" class="muted">暂无历史行动项</td></tr>'}</tbody>
           </table>
         </div>
       </div>
     </div>
   `;
+  markMyActionsViewed();
+}
+
+async function markMyActionsViewed() {
+  try {
+    const res = await api("/api/actions/mark-viewed", { method: "POST", body: {} });
+    if (res.user) {
+      app.user = res.user;
+      upsertById("users", res.user);
+      renderAppShellNavOnly();
+    }
+  } catch (_err) {
+    // 查看时间只是管理留痕，失败不影响用户查看行动项。
+  }
 }
 
 function draftCardFromButton(button) {
@@ -1937,7 +1983,7 @@ function renderAdmin() {
         ` : ""}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>人员资料</th><th>业务角色</th><th>最后登录</th><th>操作</th></tr></thead>
+            <thead><tr><th>用户名</th><th>系统权限</th><th>状态</th><th>绑定现实人员</th><th>人员资料</th><th>业务角色</th><th>最后登录</th><th>最后查看行动项</th><th>操作</th></tr></thead>
             <tbody>
               ${users.map((u) => `
                 <tr data-user-id="${u.id}">
@@ -1948,6 +1994,7 @@ function renderAdmin() {
                   <td>${personInfo(personById(u.person_id))}</td>
                   <td><div class="checkbox-grid role-checkboxes">${roleCheckboxes(u.business_role_ids || [])}</div></td>
                   <td>${escapeHtml(u.last_login_at || "-")}</td>
+                  <td>${escapeHtml(u.last_my_actions_viewed_at || "-")}</td>
                   <td class="split-actions">
                     <button class="plain-btn save-user">保存</button>
                     <button class="plain-btn reset-user">重置密码</button>

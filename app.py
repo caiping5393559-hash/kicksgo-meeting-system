@@ -482,6 +482,8 @@ def default_state() -> dict[str, Any]:
         "transcript_uploads": [],
         "action_drafts": [],
         "action_items": [],
+        "minutes_view_logs": [],
+        "action_view_logs": [],
         "audit_logs": [],
     }
 
@@ -710,6 +712,8 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         str(rule).replace("凯尔从", "美国代运营从").replace("凯尔", "美国代运营")
         for rule in state["settings"].get("meeting_rules", [])
     ]
+    state.setdefault("minutes_view_logs", [])
+    state.setdefault("action_view_logs", [])
     for meeting in state.get("meetings", []):
         if "凯尔" in str(meeting.get("report_due_note") or ""):
             meeting["report_due_note"] = str(meeting.get("report_due_note") or "").replace("凯尔", "美国代运营")
@@ -735,6 +739,7 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(user.get("business_role_ids"), list):
             user["business_role_ids"] = []
         user.setdefault("must_change_password", False)
+        user.setdefault("last_my_actions_viewed_at", "")
     forced_person_aliases = {
         "person_boss": {"meeting_aliases": ["蔡平 诺诺"], "mention_aliases": []},
         "person_chen": {"meeting_aliases": ["人生如戏"], "mention_aliases": ["人生如戏"]},
@@ -887,6 +892,35 @@ def can_see_transcript_summary(user: dict[str, Any], record: dict[str, Any]) -> 
     if can_read_transcript_record(user, record):
         return True
     return is_agency_only_user(user) and record.get("part") == "part1"
+
+
+def record_minutes_view(state: dict[str, Any], user: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    logs = state.setdefault("minutes_view_logs", [])
+    now = now_iso()
+    existing = next(
+        (
+            log for log in logs
+            if log.get("transcript_id") == record.get("id") and log.get("user_id") == user.get("id")
+        ),
+        None,
+    )
+    data = {
+        "transcript_id": record.get("id"),
+        "meeting_id": record.get("meeting_id"),
+        "part": record.get("part"),
+        "user_id": user.get("id"),
+        "person_id": user.get("person_id"),
+        "username": user.get("username"),
+        "viewed_at": now,
+    }
+    if existing:
+        existing.update(data)
+        return existing
+    created = {"id": new_id("view"), **data}
+    logs.insert(0, created)
+    if len(logs) > 1000:
+        del logs[1000:]
+    return created
 
 
 def audit(state: dict[str, Any], user: dict[str, Any] | None, action: str, detail: dict[str, Any] | None = None) -> None:
@@ -1633,36 +1667,36 @@ def concise_action_title(text: str) -> str:
         return ""
     lower = body.lower()
     rules = [
-        (["200", "单双", "独立", "链接"], "制作 200 双单双库存拍卖链接"),
-        (["大货", "链接"], "确认大货链接销售逻辑"),
-        (["大货", "售卖逻辑"], "确认大货链接销售逻辑"),
-        (["大货", "拍卖关联"], "确认大货链接销售逻辑"),
-        (["200", "单双", "上架"], "上架并迁移 200 双单双鞋"),
-        (["赠品", "链接"], "制作赠品链接模板"),
-        (["lulemon", "aio"], "解决 Lulemon 和 AIo 供应端问题"),
-        (["推荐供应单品"], "补齐推荐供应单品资料"),
-        (["供应单品", "款号"], "补齐供应商款式和货号"),
-        (["未上架", "授权"], "授权主店未上架产品上架"),
-        (["评分", "300"], "跟进账号评分恢复到 300 分"),
-        (["评分", "149"], "跟进账号评分恢复"),
-        (["安全库存"], "确认安全库存方案"),
-        (["库存", "同步"], "确认库存同步方案"),
-        (["api", "对接"], "推进 API 对接"),
-        (["达人", "送样"], "推进达人送样测品"),
-        (["直播", "流程"], "制定直播执行流程"),
-        (["客服", "评分"], "提升客服评分"),
-        (["物流", "评分"], "提升物流评分"),
-        (["主播招募"], "扩大主播招募渠道"),
-        (["ai视频"], "评估 AI 视频内容生产"),
-        (["测款", "反馈", "进货"], "建立测款反馈进货闭环"),
-        (["王总团队"], "跟进王总团队合作"),
-        (["跑外联"], "每日推进外联进展"),
-        (["链接价格", "1元"], "处理新账号链接定价错误"),
-        (["现场问题处理"], "处理现场问题"),
-        (["内部事务", "直播间"], "优化直播间运营学习"),
-        (["外部事务", "直播间"], "推进直播间外联和官方沟通"),
-        (["内外部团队分工"], "确认内外部团队分工"),
-        (["国内团队", "采购"], "同步国内采购问题"),
+        (["200", "单双", "独立", "链接"], "制作 200 双单双库存拍卖链接，并确认上架使用方式"),
+        (["大货", "链接"], "确认大货链接销售逻辑，明确拍卖关联和商品二维码口径"),
+        (["大货", "售卖逻辑"], "确认大货链接销售逻辑，明确拍卖关联和商品二维码口径"),
+        (["大货", "拍卖关联"], "确认大货链接销售逻辑，明确拍卖关联和商品二维码口径"),
+        (["200", "单双", "上架"], "上架并迁移 200 双单双鞋，保证直播间可直接销售"),
+        (["赠品", "链接"], "制作赠品链接模板，明确达人和直播间使用方式"),
+        (["lulemon", "aio"], "解决 Lulemon 和 AIo 供应端问题，恢复可销售货源"),
+        (["推荐供应单品"], "补齐推荐供应单品资料，完善款式、货号和供货信息"),
+        (["供应单品", "款号"], "补齐供应商款式和货号，方便采购和上架判断"),
+        (["未上架", "授权"], "授权主店未上架产品上架，避免内部流程阻塞"),
+        (["评分", "300"], "跟进账号评分恢复到 300 分，并持续观察恢复进度"),
+        (["评分", "149"], "跟进账号评分恢复，并确认影响评分的具体原因"),
+        (["安全库存"], "确认安全库存方案，降低多店同步导致的超卖风险"),
+        (["库存", "同步"], "确认库存同步方案，明确安全库存和系统责任"),
+        (["api", "对接"], "推进 API 对接，解决库存同步和数据上传问题"),
+        (["达人", "送样"], "推进达人送样测品，并跟踪视频存活和带货效果"),
+        (["直播", "流程"], "制定直播执行流程，明确计划、话术和货品准备"),
+        (["客服", "评分"], "提升客服评分，明确客诉响应和售后处理要求"),
+        (["物流", "评分"], "提升物流评分，重点处理发货时效和异常订单"),
+        (["主播招募"], "扩大主播招募渠道，并确认直播工会合作可能性"),
+        (["ai视频"], "评估 AI 视频内容生产，确认是否能用于短视频带货"),
+        (["测款", "反馈", "进货"], "建立测款-反馈-进货闭环，减少货品销售和补货脱节"),
+        (["王总团队"], "跟进王总团队合作，尽量挽留可用资源"),
+        (["跑外联"], "每日推进外联进展，并在周会同步结果"),
+        (["链接价格", "1元"], "处理新账号链接定价错误，避免低价链接风险"),
+        (["现场问题处理"], "处理现场问题，并沉淀成后续会议跟踪事项"),
+        (["内部事务", "直播间"], "优化直播间内部事务管理，从运营到产品进行全面学习"),
+        (["外部事务", "直播间"], "推进直播间外联和官方沟通，补齐外部资源"),
+        (["内外部团队分工"], "确认内外部团队分工，减少重复沟通和责任空档"),
+        (["国内团队", "采购"], "同步国内采购问题，及时提出货品和补货需求"),
     ]
     for keywords, title in rules:
         if all(keyword.lower() in lower for keyword in keywords):
@@ -1682,9 +1716,9 @@ def concise_action_title(text: str) -> str:
     chosen = re.sub(r"^(由|让)?[^，。；;]{1,12}(负责|来|去)\s*", "", chosen)
     chosen = re.sub(r"^(确认|制作|上架|解决|授权|补齐|推进|制定|整理|检查|同步|联系|跟进|优化|处理|恢复|建立|调整)", r"\1", chosen)
     chosen = chosen.strip(" ，。；;")
-    if len(chosen) > 42:
-        cut = max(chosen.rfind("，", 0, 42), chosen.rfind("、", 0, 42), chosen.rfind(" ", 0, 42))
-        chosen = chosen[:cut if cut > 16 else 42].rstrip(" ，、。；;") + "..."
+    if len(chosen) > 78:
+        cut = max(chosen.rfind("，", 0, 78), chosen.rfind("、", 0, 78), chosen.rfind(" ", 0, 78))
+        chosen = chosen[:cut if cut > 28 else 78].rstrip(" ，、。；;") + "..."
     return chosen
 
 
@@ -1731,6 +1765,60 @@ def parse_due_date(text: str) -> str:
     return ""
 
 
+def infer_action_timing(text: str, due_date: str = "") -> tuple[str, str]:
+    body = str(text or "")
+    if due_date:
+        return "明确截止时间", f"会议文字出现明确日期，系统已填入截止日期 {due_date}。"
+
+    relative_patterns = [
+        "今天", "明天", "后天", "本周", "下周", "周一", "周二", "周三", "周四", "周五", "周六", "周日",
+        "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日", "一周内", "两天内", "24小时", "48小时",
+        "马上", "立刻", "尽快", "会前", "会后",
+    ]
+    recurring_patterns = ["每天", "每日", "每周", "每次", "持续", "长期", "定期", "常态", "继续", "复盘", "观察", "跟踪", "跟进"]
+    record_patterns = ["备案", "记录", "说明", "同步一下", "沟通一下", "讨论", "建议", "原则", "方向", "现状", "了解"]
+    execution_patterns = ["负责", "完成", "必须", "解决", "制作", "上架", "联系", "推进", "处理", "确认", "补齐", "建立", "制定", "授权"]
+
+    matched_relative = [keyword for keyword in relative_patterns if keyword in body]
+    if matched_relative:
+        return "会上明确时间", f"会议中出现相对时间：{'、'.join(matched_relative[:3])}；未自动换算成日期，管理员可按会议日期补充具体截止日。"
+
+    if any(keyword in body for keyword in recurring_patterns):
+        return "常态化管理", "不是一次性截止项，需要每周例会持续跟进状态和下一步结果。"
+
+    if any(keyword in body for keyword in record_patterns) and not any(keyword in body for keyword in execution_patterns):
+        return "备案说明", "偏会议共识或背景说明，不一定需要一次性完成；如需执行，请管理员改成具体任务。"
+
+    return "待确认时间", "会议未明确完成时间，建议管理员补充截止日期或跟进频率。"
+
+
+def action_notes_with_timing(existing: str, time_type: str, time_note: str, source_excerpt: str = "") -> str:
+    existing = re.sub(r"\s+", " ", str(existing or "")).strip(" ；;")
+    if "类型：" in existing and "时间判断：" in existing:
+        return existing
+    prefix = f"类型：{time_type}；时间判断：{time_note}"
+    if existing:
+        return f"{prefix}；{existing}"
+    if source_excerpt:
+        return f"{prefix}；原文摘录：{source_excerpt[:160]}"
+    return prefix
+
+
+def build_action_notes(speaker: str, confidence: str, body: str, due_date: str) -> tuple[str, str, str]:
+    time_type, time_note = infer_action_timing(body, due_date)
+    notes = [
+        f"类型：{time_type}",
+        f"时间判断：{time_note}",
+        f"来源发言：{speaker or '会议文字'}",
+    ]
+    if confidence:
+        notes.append(f"负责人判断：{confidence}")
+    excerpt = re.sub(r"\s+", " ", str(body or "")).strip()
+    if excerpt:
+        notes.append(f"原文摘录：{excerpt[:180]}")
+    return time_type, time_note, "；".join(notes)
+
+
 def extract_action_draft_items(state: dict[str, Any], content: str, part: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1749,19 +1837,20 @@ def extract_action_draft_items(state: dict[str, Any], content: str, part: str) -
             continue
         seen.add(key)
         owner_person_id, owner_text, confidence = infer_action_owner(state, body, speaker_person_id)
-        notes = f"来源发言：{speaker or '会议文字'}"
-        if confidence:
-            notes += f"；负责人判断：{confidence}"
+        due_date = parse_due_date(body)
+        time_type, time_note, notes = build_action_notes(speaker, confidence, body, due_date)
         items.append(
             {
                 "id": new_id("draftitem"),
                 "title": title,
                 "owner_person_id": owner_person_id,
                 "owner_text": owner_text,
-                "due_date": parse_due_date(body),
+                "due_date": due_date,
                 "priority": infer_action_priority(body),
                 "status": "未开始",
                 "notes": notes,
+                "time_type": time_type,
+                "time_note": time_note,
                 "part": part,
                 "source_excerpt": body[:220],
                 "confidence": confidence,
@@ -1810,17 +1899,28 @@ def normalize_draft_item(state: dict[str, Any], item: dict[str, Any], part: str)
     owner_person_id = str(item.get("owner_person_id") or "")
     if owner_person_id and not person_by_id(state, owner_person_id):
         owner_person_id = ""
+    title = clean_action_title(item.get("title") or "")
+    due_date = str(item.get("due_date") or "")
+    source_excerpt = str(item.get("source_excerpt") or "")[:300]
+    timing_source = source_excerpt or title or str(item.get("notes") or "")
+    time_type = str(item.get("time_type") or "")
+    time_note = str(item.get("time_note") or "")
+    if not time_type or not time_note:
+        time_type, time_note = infer_action_timing(timing_source, due_date)
+    notes = action_notes_with_timing(str(item.get("notes") or ""), time_type, time_note, source_excerpt)
     return {
         "id": str(item.get("id") or new_id("draftitem")),
-        "title": clean_action_title(item.get("title") or ""),
+        "title": title,
         "owner_person_id": owner_person_id,
         "owner_text": str(item.get("owner_text") or ""),
-        "due_date": str(item.get("due_date") or ""),
+        "due_date": due_date,
         "priority": str(item.get("priority") or "P1-本周必须"),
         "status": str(item.get("status") or "未开始"),
-        "notes": str(item.get("notes") or ""),
+        "notes": notes,
+        "time_type": time_type,
+        "time_note": time_note,
         "part": str(item.get("part") or part or "part2"),
-        "source_excerpt": str(item.get("source_excerpt") or "")[:300],
+        "source_excerpt": source_excerpt,
         "confidence": str(item.get("confidence") or ""),
     }
 
@@ -1978,7 +2078,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "No permission"}, 403)
                 return
             content = store.load_transcript_content(transcript_id) if can_read_transcript_record(user, record) else ""
-            self.send_json({"ok": True, "record": record, "content": content})
+            view_log = None
+            if record.get("part") == "part1":
+                view_log = record_minutes_view(state, user, record)
+                store.save(state, "record_minutes_view")
+            self.send_json({"ok": True, "record": record, "content": content, "view_log": view_log})
             return
         self.serve_static(path)
 
@@ -2030,6 +2134,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/actions/save":
             self.handle_save_action(state, user, payload)
+            return
+        if path == "/api/actions/mark-viewed":
+            self.handle_mark_my_actions_viewed(state, user)
             return
         if path == "/api/actions/delete":
             self.handle_delete_item(state, user, payload, "action_items")
@@ -2121,6 +2228,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "transcript_uploads": state.get("transcript_uploads", []),
                 "action_drafts": state.get("action_drafts", []),
                 "action_items": state.get("action_items", []),
+                "minutes_view_logs": state.get("minutes_view_logs", []),
+                "action_view_logs": state.get("action_view_logs", []),
                 "audit_logs": state.get("audit_logs", [])[-80:] if is_admin(user) else [],
             }
         person_id = user.get("person_id")
@@ -2134,6 +2243,7 @@ class AppHandler(BaseHTTPRequestHandler):
             record for record in state.get("transcript_uploads", [])
             if can_see_transcript_summary(user, record)
         ]
+        visible_transcript_ids = {record.get("id") for record in visible_transcripts}
         if can_access_transcripts(user):
             visible_person_ids = {p.get("id") for p in state.get("people", []) if p.get("id")}
         return {
@@ -2154,6 +2264,11 @@ class AppHandler(BaseHTTPRequestHandler):
             "transcript_uploads": visible_transcripts,
             "action_drafts": [],
             "action_items": [a for a in state.get("action_items", []) if a.get("owner_person_id") == person_id],
+            "minutes_view_logs": [
+                log for log in state.get("minutes_view_logs", [])
+                if log.get("transcript_id") in visible_transcript_ids
+            ],
+            "action_view_logs": [log for log in state.get("action_view_logs", []) if log.get("user_id") == user.get("id")],
             "audit_logs": [],
         }
 
@@ -2549,6 +2664,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "priority": normalized.get("priority", "P1-本周必须"),
                 "status": normalized.get("status", "未开始"),
                 "notes": normalized.get("notes", ""),
+                "time_type": normalized.get("time_type", ""),
+                "time_note": normalized.get("time_note", ""),
                 "source_draft_id": draft.get("id"),
                 "source_item_id": source_item_id,
                 "source_transcript_id": draft.get("transcript_id"),
@@ -2590,16 +2707,25 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         item_id = str(payload.get("id") or "")
         existing = next((a for a in state["action_items"] if a.get("id") == item_id), None)
+        title = clean_action_title(payload.get("title") or "")
+        due_date = str(payload.get("due_date") or "")
+        time_type = str(payload.get("time_type") or "")
+        time_note = str(payload.get("time_note") or "")
+        if not time_type or not time_note:
+            time_type, time_note = infer_action_timing(str(payload.get("notes") or title), due_date)
+        notes = action_notes_with_timing(str(payload.get("notes") or ""), time_type, time_note, str(payload.get("source_excerpt") or ""))
         data = {
             "meeting_id": str(payload.get("meeting_id") or ""),
             "part": str(payload.get("part") or "part2"),
-            "title": clean_action_title(payload.get("title") or ""),
+            "title": title,
             "owner_person_id": str(payload.get("owner_person_id") or ""),
             "owner_text": str(payload.get("owner_text") or ""),
-            "due_date": str(payload.get("due_date") or ""),
+            "due_date": due_date,
             "priority": str(payload.get("priority") or "P1-本周必须"),
             "status": str(payload.get("status") or "未开始"),
-            "notes": str(payload.get("notes") or ""),
+            "notes": notes,
+            "time_type": time_type,
+            "time_note": time_note,
             "updated_at": now_iso(),
             "updated_by": user.get("id"),
         }
@@ -2615,6 +2741,26 @@ class AppHandler(BaseHTTPRequestHandler):
         audit(state, user, "save_action", {"meeting_id": saved["meeting_id"], "action_id": saved["id"]})
         store.save(state, "save_action")
         self.send_json({"ok": True, "action": saved})
+
+    def handle_mark_my_actions_viewed(self, state: dict[str, Any], user: dict[str, Any]) -> None:
+        viewed_at = now_iso()
+        user["last_my_actions_viewed_at"] = viewed_at
+        logs = state.setdefault("action_view_logs", [])
+        existing = next((log for log in logs if log.get("user_id") == user.get("id")), None)
+        data = {
+            "user_id": user.get("id"),
+            "person_id": user.get("person_id"),
+            "username": user.get("username"),
+            "viewed_at": viewed_at,
+        }
+        if existing:
+            existing.update(data)
+        else:
+            logs.insert(0, {"id": new_id("actionview"), **data})
+        if len(logs) > 1000:
+            del logs[1000:]
+        store.save(state, "mark_my_actions_viewed")
+        self.send_json({"ok": True, "user": sanitize_user(user), "viewed_at": viewed_at})
 
     def handle_delete_item(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any], collection: str) -> None:
         item_id = str(payload.get("id") or "")

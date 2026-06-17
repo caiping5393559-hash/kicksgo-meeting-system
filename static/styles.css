@@ -611,6 +611,21 @@ p {
   background: #fff;
 }
 
+.read-log-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.small-note {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
 .nested-viewer {
   margin-top: 16px;
 }
@@ -1132,7 +1147,7 @@ tr:last-child td {
 }
 
 .draft-col-notes {
-  width: 360px;
+  width: 460px;
 }
 
 .draft-col-actions {
@@ -1160,7 +1175,7 @@ tr:last-child td {
 }
 
 .published-action-table table {
-  min-width: 1380px;
+  min-width: 1560px;
   table-layout: fixed;
 }
 
@@ -1190,8 +1205,22 @@ tr:last-child td {
   width: 170px;
 }
 
+.published-col-notes {
+  width: 420px;
+}
+
 .published-col-actions {
-  width: 160px;
+  width: 120px;
+}
+
+.action-note-cell {
+  max-height: 110px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 @media (max-width: 920px) {
