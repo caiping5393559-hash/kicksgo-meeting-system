@@ -439,6 +439,23 @@ p {
   margin-top: 14px;
 }
 
+.meeting-links-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.meeting-link-edit {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.meeting-link-edit h3 {
+  margin-bottom: 10px;
+}
+
 .compact-section-title {
   align-items: center;
   margin-bottom: 8px;

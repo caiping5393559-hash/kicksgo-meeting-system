@@ -750,6 +750,55 @@ function previousPart1MinutesHtml(previousMeetingRecord) {
   `;
 }
 
+function fallbackMeetingLinks(links = []) {
+  if (links.length) return links;
+  return [
+    { id: "link_part1", part: "part1", title: "第一部分：美国代运营每周报表", url: "", meeting_id: "", password: "", host: "美国代运营/主持人", notes: "" },
+    { id: "link_part2", part: "part2", title: "第二部分：内部经营复盘会", url: "", meeting_id: "", password: "", host: "主持人", notes: "" },
+  ];
+}
+
+function meetingLinksDisplayHtml(links = []) {
+  return `
+    <div class="link-list dashboard-links">
+      ${fallbackMeetingLinks(links).map((link) => `
+        <div class="meeting-link">
+          <strong>${escapeHtml(link.title)}</strong>
+          <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
+          <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
+          ${link.host || link.notes ? `<div class="muted">主持/备注：${escapeHtml([link.host, link.notes].filter(Boolean).join("；"))}</div>` : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function dashboardMeetingLinksHtml(links = []) {
+  const safeLinks = fallbackMeetingLinks(links);
+  if (!canManageActions()) return meetingLinksDisplayHtml(safeLinks);
+  return `
+    <form id="dashboardMeetingLinksForm" class="meeting-links-form">
+      ${safeLinks.map((link, index) => `
+        <div class="meeting-link-edit" data-index="${index}" data-id="${escapeHtml(link.id || "")}" data-part="${escapeHtml(link.part || "")}">
+          <h3>${escapeHtml(link.title || `会议链接 ${index + 1}`)}</h3>
+          <div class="form-grid two">
+            <label>标题<input class="link-title" value="${escapeHtml(link.title || "")}" /></label>
+            <label>主持/负责人<input class="link-host" value="${escapeHtml(link.host || "")}" /></label>
+            <label class="field-wide">腾讯会议链接<input class="link-url" value="${escapeHtml(link.url || "")}" placeholder="https://meeting.tencent.com/..." /></label>
+            <label>会议号<input class="link-meeting-id" value="${escapeHtml(link.meeting_id || "")}" /></label>
+            <label>密码<input class="link-password" value="${escapeHtml(link.password || "")}" /></label>
+            <label class="field-wide">备注<textarea class="link-notes">${escapeHtml(link.notes || "")}</textarea></label>
+          </div>
+        </div>
+      `).join("")}
+      <div class="split-actions" style="margin-top:12px">
+        <button type="submit">保存腾讯会议设置</button>
+        <span id="meetingLinksMessage" class="message"></span>
+      </div>
+    </form>
+  `;
+}
+
 function renderDashboard() {
   const meeting = currentMeeting();
   const prev = previousMeeting();
@@ -787,15 +836,7 @@ function renderDashboard() {
           <div class="metric"><span>第2段文字记录</span><strong>${transcriptMetricText(part2Uploaded, meeting)}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
         </div>
-        <div class="link-list dashboard-links">
-          ${links.map((link) => `
-            <div class="meeting-link">
-              <strong>${escapeHtml(link.title)}</strong>
-              <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
-              <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
-            </div>
-          `).join("") || '<div class="muted">暂未设置固定腾讯会议链接</div>'}
-        </div>
+        ${dashboardMeetingLinksHtml(links)}
         <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
       </div>
 
@@ -868,12 +909,42 @@ function renderDashboard() {
   document.querySelectorAll(".open-agency-report").forEach((btn) => {
     btn.addEventListener("click", () => openAgencyReport(btn.dataset.meetingId, btn.dataset.personId));
   });
+  qs("#dashboardMeetingLinksForm")?.addEventListener("submit", saveDashboardMeetingLinks);
   document.querySelectorAll(".view-transcript").forEach((btn) => {
     btn.addEventListener("click", () => viewTranscript(btn.dataset.id));
   });
   qs("#toggleWeeklyCompare")?.addEventListener("click", () => {
     qs("#agencyReportCompare")?.classList.toggle("hidden");
   });
+}
+
+async function saveDashboardMeetingLinks(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = submitButton(form);
+  const done = setBusy(button, "保存中...");
+  showMessage("#meetingLinksMessage", "正在保存腾讯会议设置...", true);
+  const meeting_links = Array.from(form.querySelectorAll(".meeting-link-edit")).map((row) => ({
+    id: row.dataset.id || "",
+    part: row.dataset.part || "",
+    title: row.querySelector(".link-title")?.value || "",
+    url: row.querySelector(".link-url")?.value || "",
+    meeting_id: row.querySelector(".link-meeting-id")?.value || "",
+    password: row.querySelector(".link-password")?.value || "",
+    host: row.querySelector(".link-host")?.value || "",
+    notes: row.querySelector(".link-notes")?.value || "",
+  }));
+  try {
+    const res = await api("/api/meeting-links/save", { method: "POST", body: { meeting_links } });
+    app.data.settings = app.data.settings || {};
+    app.data.settings.meeting_links = res.meeting_links || meeting_links;
+    renderDashboard();
+    setTimeout(() => showMessage("#meetingLinksMessage", "腾讯会议设置已保存", true), 0);
+  } catch (err) {
+    showMessage("#meetingLinksMessage", err.message);
+  } finally {
+    done();
+  }
 }
 
 function renderMeetings() {

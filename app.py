@@ -1128,6 +1128,33 @@ def remove_existing_transcript_outputs(state: dict[str, Any], meeting_id: str, p
     return [item for item in removed_ids if item]
 
 
+def clean_meeting_links(raw_links: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_links, list):
+        raw_links = []
+    cleaned: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_links[:6]):
+        if not isinstance(raw, dict):
+            continue
+        part = str(raw.get("part") or ("part1" if index == 0 else f"part{index + 1}")).strip()
+        title = str(raw.get("title") or "").strip()
+        if not title:
+            title = "第一部分：美国代运营每周报表" if part == "part1" else "第二部分：内部经营复盘会"
+        link_id = str(raw.get("id") or f"link_{part or index + 1}").strip()
+        cleaned.append(
+            {
+                "id": link_id[:80],
+                "part": part[:30],
+                "title": title[:120],
+                "url": str(raw.get("url") or "").strip()[:500],
+                "meeting_id": str(raw.get("meeting_id") or "").strip()[:120],
+                "password": str(raw.get("password") or "").strip()[:80],
+                "host": str(raw.get("host") or "").strip()[:120],
+                "notes": str(raw.get("notes") or "").strip()[:500],
+            }
+        )
+    return cleaned
+
+
 def person_display_name(person: dict[str, Any] | None) -> str:
     if not person:
         return ""
@@ -1629,6 +1656,9 @@ class AppHandler(BaseHTTPRequestHandler):
         if path == "/api/notes/delete":
             self.handle_delete_item(state, user, payload, "pre_meeting_notes")
             return
+        if path == "/api/meeting-links/save":
+            self.handle_save_meeting_links(state, user, payload)
+            return
         if path == "/api/transcripts/upload":
             self.handle_upload_transcript(state, user, payload)
             return
@@ -1972,6 +2002,19 @@ class AppHandler(BaseHTTPRequestHandler):
         audit(state, user, "save_note", {"meeting_id": saved["meeting_id"], "note_id": saved["id"]})
         store.save(state, "save_note")
         self.send_json({"ok": True, "note": saved})
+
+    def handle_save_meeting_links(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
+        if not can_manage_actions(user):
+            self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以保存腾讯会议设置"}, 403)
+            return
+        links = clean_meeting_links(payload.get("meeting_links") or [])
+        if not links:
+            self.send_json({"ok": False, "error": "至少需要保留一条腾讯会议设置"}, 400)
+            return
+        state.setdefault("settings", {})["meeting_links"] = links
+        audit(state, user, "save_meeting_links", {"link_count": len(links)})
+        store.save(state, "save_meeting_links")
+        self.send_json({"ok": True, "meeting_links": links})
 
     def handle_upload_transcript(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
@@ -2419,7 +2462,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "meeting": saved})
             return
         if path == "/api/admin/save-links":
-            links = payload.get("meeting_links") or []
+            links = clean_meeting_links(payload.get("meeting_links") or [])
             state.setdefault("settings", {})["meeting_links"] = links
             audit(state, user, "admin_save_links")
             store.save(state, "admin_save_links")
