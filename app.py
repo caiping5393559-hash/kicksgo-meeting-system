@@ -1113,18 +1113,26 @@ def remove_existing_transcript_outputs(state: dict[str, Any], meeting_id: str, p
         for record in state.setdefault("transcript_uploads", [])
         if record.get("meeting_id") == meeting_id and record.get("part") == part
     ]
+    removed_draft_ids = [
+        str(draft.get("id") or "")
+        for draft in state.setdefault("action_drafts", [])
+        if draft.get("meeting_id") == meeting_id and draft.get("part") == part
+    ]
+    removed_draft_ids = [draft_id for draft_id in removed_draft_ids if draft_id]
     state["transcript_uploads"] = [
         record for record in state.get("transcript_uploads", [])
         if not (record.get("meeting_id") == meeting_id and record.get("part") == part)
     ]
     state["action_drafts"] = [
         draft for draft in state.get("action_drafts", [])
-        if not (
-            draft.get("meeting_id") == meeting_id
-            and draft.get("part") == part
-            and draft.get("status") != "已确认生成行动项"
-        )
+        if not (draft.get("meeting_id") == meeting_id and draft.get("part") == part)
     ]
+    if removed_draft_ids:
+        removed_draft_id_set = set(removed_draft_ids)
+        state["action_items"] = [
+            action for action in state.get("action_items", [])
+            if action.get("source_draft_id") not in removed_draft_id_set
+        ]
     return [item for item in removed_ids if item]
 
 
@@ -2171,13 +2179,21 @@ class AppHandler(BaseHTTPRequestHandler):
         if not draft:
             self.send_json({"ok": False, "error": "行动项初稿不存在"}, 404)
             return
-        created_actions: list[dict[str, Any]] = []
+        published_actions: list[dict[str, Any]] = []
+        published_item_ids: set[str] = set()
+        existing_by_source_item = {
+            str(action.get("source_item_id")): action
+            for action in state.setdefault("action_items", [])
+            if action.get("source_draft_id") == draft.get("id") and action.get("source_item_id")
+        }
         for item in draft.get("items", []):
             normalized = normalize_draft_item(state, item, str(draft.get("part") or "part2"))
             if not normalized.get("title"):
                 continue
-            action = {
-                "id": new_id("action"),
+            source_item_id = str(normalized.get("id") or new_id("draftitem"))
+            published_item_ids.add(source_item_id)
+            action = existing_by_source_item.get(source_item_id)
+            data = {
                 "meeting_id": str(draft.get("meeting_id") or ""),
                 "part": normalized.get("part") or draft.get("part") or "part2",
                 "title": normalized["title"],
@@ -2188,14 +2204,25 @@ class AppHandler(BaseHTTPRequestHandler):
                 "status": normalized.get("status", "未开始"),
                 "notes": normalized.get("notes", ""),
                 "source_draft_id": draft.get("id"),
+                "source_item_id": source_item_id,
                 "source_transcript_id": draft.get("transcript_id"),
-                "created_at": now_iso(),
                 "updated_at": now_iso(),
-                "created_by": user.get("id"),
                 "updated_by": user.get("id"),
             }
-            state.setdefault("action_items", []).insert(0, action)
-            created_actions.append(action)
+            if action:
+                action.update(data)
+            else:
+                action = {"id": new_id("action"), "created_at": now_iso(), "created_by": user.get("id"), **data}
+                state.setdefault("action_items", []).insert(0, action)
+            published_actions.append(action)
+        state["action_items"] = [
+            action for action in state.get("action_items", [])
+            if not (
+                action.get("source_draft_id") == draft.get("id")
+                and action.get("source_item_id")
+                and str(action.get("source_item_id")) not in published_item_ids
+            )
+        ]
         draft["status"] = "已确认生成行动项"
         draft["confirmed_at"] = now_iso()
         draft["confirmed_by"] = user.get("id")
@@ -2203,13 +2230,13 @@ class AppHandler(BaseHTTPRequestHandler):
         draft.setdefault("chat", []).append(
             {
                 "role": "system",
-                "message": f"已生成 {len(created_actions)} 条正式行动项，并分发到负责人本周落实行动项目。",
+                "message": f"已发布/更新 {len(published_actions)} 条正式行动项，并同步到负责人我的行动项。",
                 "created_at": now_iso(),
             }
         )
-        audit(state, user, "approve_action_draft", {"draft_id": draft.get("id"), "action_count": len(created_actions)})
+        audit(state, user, "approve_action_draft", {"draft_id": draft.get("id"), "action_count": len(published_actions)})
         store.save(state, "approve_action_draft")
-        self.send_json({"ok": True, "draft": draft, "actions": created_actions})
+        self.send_json({"ok": True, "draft": draft, "actions": published_actions})
 
     def handle_save_action(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):

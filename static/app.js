@@ -14,12 +14,10 @@ const CN_ADMIN_ROLE_ID = "role_cn_admin";
 
 const pages = [
   ["dashboard", "周会首页"],
-  ["meetings", "会议列表"],
   ["report", "美国代运营每周报表填写"],
-  ["notes", "会前备注"],
-  ["transcripts", "会议文字记录"],
-  ["action_manage", "行动项管理"],
+  ["meeting_ops", "会议纪要与行动项"],
   ["my_actions", "我的行动项"],
+  ["notes", "会前备注"],
   ["admin", "管理员"],
 ];
 
@@ -263,14 +261,18 @@ function agendaNotesHtml(agendaTitle, meetingId) {
   const notes = (app.data?.pre_meeting_notes || [])
     .filter((note) => note.meeting_id === meetingId && noteAgendaTitle(note) === agendaTitle && String(note.question || "").trim());
   if (!notes.length) return "";
+  const tooltip = notes.map((note) => `${personName(note.person_id) || "未绑定人员"}：${note.question || ""}`).join("\n");
   return `
-    <div class="agenda-notes">
+    <div class="agenda-notes-hover" title="${escapeHtml(tooltip)}">
+      <span class="tag amber">会前备注 ${notes.length} 条</span>
+      <div class="agenda-notes-popover">
       ${notes.map((note) => `
         <div class="agenda-note">
-          <strong>${escapeHtml(personName(note.person_id) || "未绑定人员")}</strong>
+          <strong>${escapeHtml(personName(note.person_id) || "未绑定人员")}：</strong>
           <p>${escapeHtml(note.question || "")}</p>
         </div>
       `).join("")}
+      </div>
     </div>
   `;
 }
@@ -612,8 +614,7 @@ function renderAppShell() {
   const visiblePages = pages.filter(([key]) => {
     if (key === "admin") return app.user?.role === "admin";
     if (key === "report") return canFillAgencyReport();
-    if (key === "transcripts") return canViewTranscripts();
-    if (key === "action_manage") return canManageActions();
+    if (key === "meeting_ops") return canViewTranscripts();
     return true;
   });
   qs("#nav").innerHTML = visiblePages
@@ -632,8 +633,7 @@ function renderPage() {
   if (app.page === "meetings") renderMeetings();
   if (app.page === "report") renderReport();
   if (app.page === "notes") renderNotes();
-  if (app.page === "transcripts") renderTranscripts();
-  if (app.page === "action_manage") renderActionManage();
+  if (app.page === "meeting_ops" || app.page === "transcripts" || app.page === "action_manage") renderMeetingOps();
   if (app.page === "my_actions") renderMyActions();
   if (app.page === "admin") renderAdmin();
   renderAppShellNavOnly();
@@ -760,9 +760,9 @@ function fallbackMeetingLinks(links = []) {
 
 function meetingLinksDisplayHtml(links = []) {
   return `
-    <div class="link-list dashboard-links">
+    <div class="link-list dashboard-links compact-dashboard-links">
       ${fallbackMeetingLinks(links).map((link) => `
-        <div class="meeting-link">
+        <div class="meeting-link compact-meeting-link">
           <strong>${escapeHtml(link.title)}</strong>
           <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
           <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
@@ -773,9 +773,8 @@ function meetingLinksDisplayHtml(links = []) {
   `;
 }
 
-function dashboardMeetingLinksHtml(links = []) {
+function meetingLinksEditFormHtml(links = []) {
   const safeLinks = fallbackMeetingLinks(links);
-  if (!canManageActions()) return meetingLinksDisplayHtml(safeLinks);
   return `
     <form id="dashboardMeetingLinksForm" class="meeting-links-form">
       ${safeLinks.map((link, index) => `
@@ -799,13 +798,66 @@ function dashboardMeetingLinksHtml(links = []) {
   `;
 }
 
+function compactMeetingArchiveHtml() {
+  const meetings = [...(app.data.meetings || [])]
+    .sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a))
+    .slice(0, 6);
+  return `
+    <details class="compact-archive">
+      <summary>每周会议档案</summary>
+      <div class="table-wrap compact-table-wrap">
+        <table>
+          <thead><tr><th>会议</th><th>状态</th><th>美国时间</th><th>中国时间</th></tr></thead>
+          <tbody>
+            ${meetings.map((m) => `
+              <tr>
+                <td>${escapeHtml(m.title || m.name || m.id)}</td>
+                <td>${escapeHtml(m.status || "-")}</td>
+                <td>${escapeHtml([m.us_date, m.us_time].filter(Boolean).join(" ") || "-")}</td>
+                <td>${escapeHtml([m.cn_date, m.cn_time].filter(Boolean).join(" ") || "-")}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="4" class="muted">暂无会议档案</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
+function dashboardMeetingLinksHtml(links = []) {
+  const safeLinks = fallbackMeetingLinks(links);
+  return `
+    <div class="meeting-dashboard-block">
+      ${meetingLinksDisplayHtml(safeLinks)}
+      <div class="split-actions compact-dashboard-actions">
+        ${canManageActions() ? '<button type="button" class="plain-btn" id="openMeetingLinksModal">设置腾讯会议</button>' : ""}
+        <span id="dashboardMeetingStatus" class="message"></span>
+      </div>
+      ${compactMeetingArchiveHtml()}
+    </div>
+    ${canManageActions() ? `
+      <div id="meetingLinksModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-panel meeting-links-modal">
+          <div class="section-title">
+            <div>
+              <h2>腾讯会议设置</h2>
+              <p class="muted">这里只维护固定会议链接、会议号和密码。保存后首页只显示简版信息。</p>
+            </div>
+            <button type="button" class="plain-btn" id="closeMeetingLinksModal">关闭</button>
+          </div>
+          ${meetingLinksEditFormHtml(safeLinks)}
+        </div>
+      </div>
+    ` : ""}
+  `;
+}
+
 function renderDashboard() {
   const meeting = currentMeeting();
   const prev = previousMeeting();
   const links = app.data.settings?.meeting_links || [];
   const reports = app.data.weekly_reports || [];
   const actions = app.data.action_items || [];
-  const notes = app.data.pre_meeting_notes || [];
   const reportPersonIds = agencyReportPersonIds();
   const historyReports = agencyReports();
   const report = reports.find((r) => r.meeting_id === meeting?.id && reportPersonIds.includes(r.person_id));
@@ -823,13 +875,13 @@ function renderDashboard() {
         <div class="section-title">
           <div>
             <h2>一、腾讯会议设置和显示</h2>
-            <p class="muted">美国时间 ${escapeHtml(meeting?.us_date || "")} ${escapeHtml(meeting?.us_time || "")} / 中国时间 ${escapeHtml(meeting?.cn_date || "")} ${escapeHtml(meeting?.cn_time || "")}</p>
+            <p class="muted">只显示会议入口；需要修改时点设置按钮。</p>
           </div>
           <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
         </div>
-        <div class="metric-row">
-          <div class="metric"><span>下次周会</span><strong>${escapeHtml(meeting?.title || "暂无会议")}</strong></div>
-          <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
+        <div class="meeting-compact-meta">
+          <strong>${escapeHtml(meeting?.title || "暂无会议")}</strong>
+          <span>美国时间 ${escapeHtml(meeting?.us_date || "")} ${escapeHtml(meeting?.us_time || "")} / 中国时间 ${escapeHtml(meeting?.cn_date || "")} ${escapeHtml(meeting?.cn_time || "")}</span>
         </div>
         ${dashboardMeetingLinksHtml(links)}
         <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
@@ -843,12 +895,12 @@ function renderDashboard() {
           </div>
           <button type="button" class="plain-btn" id="toggleWeeklyCompare">每周对比</button>
         </div>
-        <div class="grid two">
-          <div>
+        <div class="agency-weekly-stack">
+          <div class="stack-section">
             <h3>上周第一段会议纪要</h3>
             ${previousPart1MinutesHtml(prev)}
           </div>
-          <div>
+          <div class="stack-section">
             <h3>美国代运营每周报表</h3>
             <div class="metric-row two-metrics">
               <div class="metric"><span>本周填写状态</span><strong>${reportStatus}</strong>${reportAction}</div>
@@ -904,6 +956,8 @@ function renderDashboard() {
   document.querySelectorAll(".open-agency-report").forEach((btn) => {
     btn.addEventListener("click", () => openAgencyReport(btn.dataset.meetingId, btn.dataset.personId));
   });
+  qs("#openMeetingLinksModal")?.addEventListener("click", openMeetingLinksModal);
+  qs("#closeMeetingLinksModal")?.addEventListener("click", closeMeetingLinksModal);
   qs("#dashboardMeetingLinksForm")?.addEventListener("submit", saveDashboardMeetingLinks);
   document.querySelectorAll(".view-transcript").forEach((btn) => {
     btn.addEventListener("click", () => viewTranscript(btn.dataset.id));
@@ -911,6 +965,22 @@ function renderDashboard() {
   qs("#toggleWeeklyCompare")?.addEventListener("click", () => {
     qs("#agencyReportCompare")?.classList.toggle("hidden");
   });
+}
+
+function openMeetingLinksModal() {
+  const modal = qs("#meetingLinksModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+}
+
+function closeMeetingLinksModal() {
+  const modal = qs("#meetingLinksModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
 }
 
 async function saveDashboardMeetingLinks(event) {
@@ -933,8 +1003,9 @@ async function saveDashboardMeetingLinks(event) {
     const res = await api("/api/meeting-links/save", { method: "POST", body: { meeting_links } });
     app.data.settings = app.data.settings || {};
     app.data.settings.meeting_links = res.meeting_links || meeting_links;
+    closeMeetingLinksModal();
     renderDashboard();
-    setTimeout(() => showMessage("#meetingLinksMessage", "腾讯会议设置已保存", true), 0);
+    setTimeout(() => showMessage("#dashboardMeetingStatus", "腾讯会议设置已保存", true), 0);
   } catch (err) {
     showMessage("#meetingLinksMessage", err.message);
   } finally {
@@ -943,65 +1014,8 @@ async function saveDashboardMeetingLinks(event) {
 }
 
 function renderMeetings() {
-  const meeting = currentMeeting();
-  const links = app.data.settings?.meeting_links || [];
-  const meetings = [...(app.data.meetings || [])];
-  setTitle("会议列表", "所有人查看固定腾讯会议链接、当前会议和每周会议档案。");
-  qs("#content").innerHTML = `
-    <div class="grid">
-      <div class="panel">
-        <h2>固定腾讯会议链接</h2>
-        <div class="link-list">
-          ${links.map((link) => `
-            <div class="meeting-link">
-              <strong>${escapeHtml(link.title)}</strong>
-              <div>${link.url ? `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">${escapeHtml(link.url)}</a>` : '<span class="muted">暂未填写链接</span>'}</div>
-              <div class="muted">会议号：${escapeHtml(link.meeting_id || "-")}　密码：${escapeHtml(link.password || "-")}</div>
-              <div class="muted">主持人：${escapeHtml(link.host || "-")}　备注：${escapeHtml(link.notes || "-")}</div>
-            </div>
-          `).join("") || '<div class="muted">暂无固定会议链接</div>'}
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="section-title">
-          <div>
-            <h2>当前 / 下次会议</h2>
-            <p class="muted">${escapeHtml(meeting?.title || "暂无会议")}</p>
-          </div>
-          <span class="tag ${meeting?.status === "已开会" ? "green" : "amber"}">${escapeHtml(meeting?.status || "")}</span>
-        </div>
-        <div class="metric-row">
-          <div class="metric"><span>美国时间</span><strong>${escapeHtml(`${meeting?.us_date || "-"} ${meeting?.us_time || ""}`)}</strong></div>
-          <div class="metric"><span>中国时间</span><strong>${escapeHtml(`${meeting?.cn_date || "-"} ${meeting?.cn_time || ""}`)}</strong></div>
-          <div class="metric"><span>美国代运营每周报表</span><strong>${meeting?.kyle_report_required ? "必填" : "不强制"}</strong></div>
-          <div class="metric"><span>会议状态</span><strong>${escapeHtml(meeting?.status || "-")}</strong></div>
-        </div>
-        <p class="muted" style="margin-top:12px">${escapeHtml(meeting?.notes || "")}</p>
-      </div>
-
-      <div class="panel">
-        <h2>每周会议档案</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>标题</th><th>状态</th><th>美国时间</th><th>中国时间</th><th>美国代运营每周报表</th><th>备注</th></tr></thead>
-            <tbody>
-              ${meetings.map((m) => `
-                <tr>
-                  <td>${escapeHtml(m.title)}</td>
-                  <td>${escapeHtml(m.status)}</td>
-                  <td>${escapeHtml(`${m.us_date || ""} ${m.us_time || ""}`)}</td>
-                  <td>${escapeHtml(`${m.cn_date || ""} ${m.cn_time || ""}`)}</td>
-                  <td>${m.kyle_report_required ? "必填" : "不强制"}</td>
-                  <td>${escapeHtml(m.notes || "")}</td>
-                </tr>
-              `).join("") || '<tr><td colspan="6" class="muted">暂无会议档案</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  `;
+  app.page = "dashboard";
+  renderDashboard();
 }
 
 function openAgencyReport(meetingId = "", personId = "") {
@@ -1154,20 +1168,8 @@ function renderNotes() {
         </div>
       </form>
       <div class="panel">
-        <h2>内部经营复盘会流程</h2>
-        <div class="agenda">
-          ${part2Agenda.map((row) => `
-            <div class="agenda-row">
-              <span class="tag">${row[0]}</span>
-              <div>
-                <strong>${escapeHtml(row[1])}</strong><br>
-                <span class="muted">${escapeHtml(row[3])}</span>
-                ${agendaNotesHtml(row[1], meeting?.id) || '<div class="agenda-notes muted">暂无会前备注</div>'}
-              </div>
-              <div class="agenda-owner">${agendaRoleBindingsHtml(row[1])}</div>
-            </div>
-          `).join("")}
-        </div>
+        <h2>显示位置</h2>
+        <p class="hint">保存后的内容会出现在周会首页“内部经营复盘会流程”对应业务角色行里，鼠标移到“会前备注”标签上可以查看填写人和完整内容。</p>
       </div>
     </div>
   `;
@@ -1193,15 +1195,17 @@ async function saveNote(event) {
   }
 }
 
-function renderTranscripts() {
+function renderMeetingOps() {
   const uploadMeeting = lastOccurredMeeting();
   const records = app.data.transcript_uploads || [];
   const canUpload = canManageActions();
   const canRaw = canViewRawTranscripts();
+  const actionDrafts = (app.data.action_drafts || []).filter((draft) => draft.part !== "part1");
+  const actions = app.data.action_items || [];
   const subtitle = canUpload
-    ? "上传腾讯会议导出的文字记录；第一段生成会议纪要，第二段生成行动项初稿。"
+    ? "第一段生成会议纪要；第二段生成行动项初稿，发布后仍可继续修改并重新发布。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
-  setTitle("会议文字记录", subtitle);
+  setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
@@ -1269,6 +1273,24 @@ function renderTranscripts() {
         </div>
       </div>
       <div id="transcriptViewer" class="panel transcript-viewer hidden"></div>
+      ${canManageActions() ? `
+        <div class="panel">
+          <h2>第二段行动项管理</h2>
+          <p class="hint">第二段会议文字上传后会生成行动项初版。可以逐行新增、修改、删除；点击“保存正式发布”后会分发到责任人的“我的行动项”。发布后仍然可以继续修改，再次点击“保存正式发布”会更新责任人行动项，不会重复生成。</p>
+        </div>
+        ${renderActionDrafts(actionDrafts)}
+        <div class="panel">
+          <h2>已发布行动项</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
+              <tbody>
+                ${actionRowsHtml(actions, true) || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ""}
     </div>
   `;
   qs("#transcriptFile")?.addEventListener("change", async (event) => {
@@ -1287,6 +1309,7 @@ function renderTranscripts() {
   document.querySelectorAll(".view-transcript").forEach((btn) => {
     btn.addEventListener("click", () => viewTranscript(btn.dataset.id));
   });
+  wireActionManagement();
 }
 
 async function saveTranscript(event) {
@@ -1301,13 +1324,21 @@ async function saveTranscript(event) {
     const res = await api("/api/transcripts/upload", { method: "POST", body });
     app.pendingTranscriptFile = null;
     (res.records || []).forEach((record) => {
+      const removedDraftIds = (app.data.action_drafts || [])
+        .filter((old) => old.meeting_id === record.meeting_id && old.part === record.part)
+        .map((old) => old.id)
+        .filter(Boolean);
       app.data.transcript_uploads = (app.data.transcript_uploads || [])
         .filter((old) => !(old.meeting_id === record.meeting_id && old.part === record.part));
+      app.data.action_drafts = (app.data.action_drafts || [])
+        .filter((old) => !(old.meeting_id === record.meeting_id && old.part === record.part));
+      if (removedDraftIds.length) {
+        app.data.action_items = (app.data.action_items || [])
+          .filter((item) => !removedDraftIds.includes(item.source_draft_id));
+      }
       upsertById("transcript_uploads", record);
     });
     (res.action_drafts || []).forEach((draft) => {
-      app.data.action_drafts = (app.data.action_drafts || [])
-        .filter((old) => !(old.meeting_id === draft.meeting_id && old.part === draft.part && old.status !== "已确认生成行动项"));
       upsertById("action_drafts", draft);
     });
     const draftItemCount = (res.action_drafts || []).reduce((sum, draft) => sum + (draft.items || []).length, 0);
@@ -1315,7 +1346,7 @@ async function saveTranscript(event) {
     if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("Part 1 已生成 AI 会议纪要草稿");
     if (draftItemCount) savedParts.push(`Part 2 已生成 ${draftItemCount} 条行动项初稿`);
     if ((res.replaced || []).length) savedParts.push("同会议同段旧版本已覆盖");
-    renderTranscripts();
+    renderMeetingOps();
     setTimeout(() => showMessage("#transcriptMessage", savedParts.join("；") || "已上传保存", true), 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
@@ -1354,7 +1385,7 @@ async function viewTranscript(id) {
           ${canEditMinutes ? `
             <textarea id="minutesText" class="minutes-editor">${escapeHtml(minutes || "")}</textarea>
             <div class="split-actions" style="margin-top:10px">
-              <button type="button" class="save-minutes" data-id="${escapeHtml(record.id)}">保存为正式纪要</button>
+              <button type="button" class="save-minutes" data-id="${escapeHtml(record.id)}">保存正式纪要</button>
               <span id="minutesMessage" class="message"></span>
             </div>
           ` : `<pre class="minutes-preview">${escapeHtml(minutes || "暂未生成会议纪要。")}</pre>`}
@@ -1459,8 +1490,8 @@ function renderActionDrafts(drafts) {
       </div>
       <div class="draft-actions">
         <button type="button" class="plain-btn add-draft-row">新增一行</button>
-        <button type="button" class="plain-btn save-draft">保存草稿</button>
-        <button type="button" class="approve-draft" ${draft.status === "已确认生成行动项" ? "disabled" : ""}>生成正式行动项</button>
+        <button type="button" class="plain-btn save-draft">保存当前修改</button>
+        <button type="button" class="approve-draft">保存正式发布</button>
         <span class="message draft-message"></span>
       </div>
     </div>
@@ -1482,6 +1513,20 @@ function actionRowsHtml(items, canDelete = false) {
 }
 
 function renderActionManage() {
+  renderMeetingOps();
+}
+
+function wireActionManagement() {
+  if (!canManageActions()) return;
+  document.querySelectorAll(".save-draft").forEach((btn) => btn.addEventListener("click", () => saveActionDraft(btn)));
+  document.querySelectorAll(".approve-draft").forEach((btn) => btn.addEventListener("click", () => approveActionDraft(btn)));
+  document.querySelectorAll(".save-draft-row").forEach((btn) => btn.addEventListener("click", () => saveDraftRow(btn)));
+  document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
+  document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
+  document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
+}
+
+function renderActionManageLegacy() {
   if (!canManageActions()) {
     app.page = "my_actions";
     renderPage();
@@ -1506,12 +1551,7 @@ function renderActionManage() {
       </div>
     </div>
   `;
-  document.querySelectorAll(".save-draft").forEach((btn) => btn.addEventListener("click", () => saveActionDraft(btn)));
-  document.querySelectorAll(".approve-draft").forEach((btn) => btn.addEventListener("click", () => approveActionDraft(btn)));
-  document.querySelectorAll(".save-draft-row").forEach((btn) => btn.addEventListener("click", () => saveDraftRow(btn)));
-  document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
-  document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
-  document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
+  wireActionManagement();
 }
 
 function renderMyActions() {
@@ -1626,7 +1666,7 @@ async function saveActionDraftFromCard(card, button, busyText = "保存中...", 
   try {
     const res = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
     upsertById("action_drafts", res.draft);
-    renderActionManage();
+    renderMeetingOps();
     setTimeout(() => showDraftMessage(res.draft?.id || draftId, successText, true), 0);
   } catch (err) {
     showDraftCardMessage(card, err.message);
@@ -1642,9 +1682,9 @@ async function saveDraftRow(button) {
 async function approveActionDraft(button) {
   const card = draftCardFromButton(button);
   const draftId = card?.dataset.draftId || "";
-  if (!confirm("确认生成正式行动项？生成后会分发到负责人本周落实行动项目里。")) return;
-  const done = setBusy(button, "生成中...");
-  showDraftCardMessage(card, "正在生成正式行动项...", true);
+  if (!confirm("确认保存并发布正式行动项？发布后会分发或更新到负责人“我的行动项”里。")) return;
+  const done = setBusy(button, "发布中...");
+  showDraftCardMessage(card, "正在保存并发布正式行动项...", true);
   try {
     const saved = await api("/api/action-drafts/save", { method: "POST", body: draftPayloadFromCard(card) });
     upsertById("action_drafts", saved.draft);
@@ -1652,7 +1692,8 @@ async function approveActionDraft(button) {
     const res = await api("/api/action-drafts/approve", { method: "POST", body: { draft_id: targetDraftId } });
     upsertById("action_drafts", res.draft);
     (res.actions || []).forEach((action) => upsertById("action_items", action));
-    renderActionManage();
+    renderMeetingOps();
+    setTimeout(() => showDraftMessage(res.draft?.id || targetDraftId, `已保存正式发布 ${res.actions?.length || 0} 条行动项`, true), 0);
   } catch (err) {
     showDraftCardMessage(card, err.message);
   } finally {
@@ -1665,7 +1706,7 @@ async function deleteAction(id) {
   try {
     await api("/api/actions/delete", { method: "POST", body: { id } });
     app.data.action_items = (app.data.action_items || []).filter((item) => item.id !== id);
-    renderActionManage();
+    renderMeetingOps();
   } catch (err) {
     alert(err.message);
   }
