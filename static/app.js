@@ -464,6 +464,15 @@ function lastOccurredMeeting() {
   return past[0] || previousMeeting() || currentMeeting();
 }
 
+function occurredMeetings() {
+  const meetings = sortedMeetingsByTime()
+    .filter((meeting) => meetingStarted(meeting))
+    .sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  const fallback = lastOccurredMeeting();
+  if (!meetings.length && fallback) return [fallback];
+  return meetings;
+}
+
 function meetingStarted(meeting) {
   if (!meeting) return false;
   if (meeting.status === "待开会") return false;
@@ -517,7 +526,7 @@ function transcriptPartStatusHtml(meetingId, part) {
 }
 
 function meetingHistoryRows() {
-  const meetings = [...(app.data.meetings || [])].sort((a, b) => meetingTimestamp(b) - meetingTimestamp(a));
+  const meetings = occurredMeetings();
   return meetings.map((meeting) => {
     const records = (app.data.transcript_uploads || []).filter((record) => record.meeting_id === meeting.id);
     const latest = [...records].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")))[0];
@@ -543,6 +552,38 @@ function showMessage(target, text, ok = false) {
   if (!el) return;
   el.textContent = text || "";
   el.className = ok ? "message success" : "message error";
+}
+
+function markAttention(element, className = "attention-target", timeout = 12000) {
+  if (!element) return;
+  element.classList.add(className);
+  setTimeout(() => element.classList.remove(className), timeout);
+}
+
+function focusUploadedTranscript(record) {
+  if (!record?.id) return;
+  const button = Array.from(document.querySelectorAll(".view-transcript"))
+    .find((btn) => btn.dataset.id === record.id);
+  if (!button) return;
+  const tipText = record.part === "part1" ? "点这里查看会议纪要草稿" : "点这里查看行动项初稿";
+  button.parentElement?.querySelector(".inline-action-tip")?.remove();
+  const tip = document.createElement("span");
+  tip.className = "inline-action-tip";
+  tip.textContent = tipText;
+  button.insertAdjacentElement("afterend", tip);
+  markAttention(button);
+  button.focus({ preventScroll: true });
+  button.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function scrollToDraftForTranscript(record) {
+  if (!record?.id) return false;
+  const card = Array.from(document.querySelectorAll(".draft-card"))
+    .find((item) => item.dataset.transcriptId === record.id);
+  if (!card) return false;
+  markAttention(card, "attention-panel");
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  return true;
 }
 
 function setBusy(button, text = "保存中...") {
@@ -1108,8 +1149,8 @@ function fieldHtml(item, value, readonly = false) {
   return `<label>${escapeHtml(label)}<input class="input-zone" name="${key}" value="${escapeHtml(value || "")}" ${disabled} /></label>`;
 }
 
-function meetingOptions(selectedId) {
-  return (app.data.meetings || []).map((m) => `<option value="${m.id}" ${m.id === selectedId ? "selected" : ""}>${escapeHtml(m.title)}</option>`).join("");
+function meetingOptions(selectedId, meetings = app.data.meetings || []) {
+  return (meetings || []).map((m) => `<option value="${escapeHtml(m.id)}" ${m.id === selectedId ? "selected" : ""}>${escapeHtml(m.title)}</option>`).join("");
 }
 
 async function saveReport(event) {
@@ -1205,34 +1246,21 @@ function renderMeetingOps() {
   const actionDrafts = (app.data.action_drafts || []).filter((draft) => draft.part !== "part1");
   const actions = app.data.action_items || [];
   const subtitle = canUpload
-    ? "第一段生成会议纪要；第二段生成行动项初稿，发布后仍可继续修改并重新发布。"
+    ? "上传会议文字后保存纪要和行动项。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
   setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
-      <form id="transcriptForm" class="panel">
+      <form id="transcriptForm" class="panel compact-upload-panel">
         <h2>上传腾讯会议文字记录</h2>
-        <div class="guidance-box">
-          <div>
-            <strong>上传第一段：美国代运营会议</strong>
-            <span>系统只提炼 AI 会议纪要草稿，不生成行动项。管理员或主持人确认后保存成正式纪要；美国代运营账号可以查看这份纪要。</span>
-          </div>
-          <div>
-            <strong>上传第二段：内部经营复盘</strong>
-            <span>系统生成行动项初稿，管理员或主持人逐行修改、删除、新增后，再生成正式行动项分发给负责人。</span>
-          </div>
-          <div>
-            <strong>上传完整文字</strong>
-            <span>如果文字里出现“第一部分凯尔/代运营结束”等断点，系统会自动拆分 Part 1 和 Part 2；同一会议同一段再次上传会覆盖旧版本。</span>
-          </div>
-        </div>
-        <div class="form-grid two">
-          <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id)}</select></label>
+        <p class="compact-upload-hint">第一段上传后生成会议纪要草稿；第二段上传后生成行动项初稿；同一会议同一段再次上传会覆盖旧版本。默认选择最近一次已经开过的会议。</p>
+        <div class="form-grid two compact-upload-grid">
+          <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
           <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营每周报表</option><option value="part2">Part 2：内部经营复盘</option></select></label>
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
-          <label class="field-wide">文字记录内容<textarea name="content" required></textarea></label>
+          <label class="field-wide">文字记录内容<textarea class="compact-upload-textarea" name="content" required></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">上传保存</button>
@@ -1242,7 +1270,7 @@ function renderMeetingOps() {
       </form>` : ""}
       <div class="panel">
         <h2>每周会议文字记录归档</h2>
-        <p class="muted">默认上传到最近一次已经开过的周会；这里可以查看每次会议 Part 1 / Part 2 是否已上传。</p>
+        <p class="muted">这里只显示已经开过的会议；默认上传到最近一次已经开过的周会。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>会议</th><th>美国时间</th><th>Part 1：美国代运营</th><th>Part 2：内部复盘</th><th>上传状态</th></tr></thead>
@@ -1348,8 +1376,12 @@ async function saveTranscript(event) {
     if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("Part 1 已生成 AI 会议纪要草稿");
     if (draftItemCount) savedParts.push(`Part 2 已生成 ${draftItemCount} 条行动项初稿`);
     if ((res.replaced || []).length) savedParts.push("同会议同段旧版本已覆盖");
+    const targetRecord = (res.records || []).find((record) => record.part === body.part) || (res.records || [])[0];
     renderMeetingOps();
-    setTimeout(() => showMessage("#transcriptMessage", savedParts.join("；") || "已上传保存", true), 0);
+    setTimeout(() => {
+      showMessage("#transcriptMessage", savedParts.join("；") || "已上传保存", true);
+      focusUploadedTranscript(targetRecord);
+    }, 0);
   } catch (err) {
     showMessage("#transcriptMessage", err.message);
   } finally {
@@ -1399,7 +1431,12 @@ async function viewTranscript(id) {
       ` : record.part === "part1" ? '<p class="hint">当前账号只能查看第一段会议纪要，原始会议文字仅管理员、会议主持人和国内行政可见。</p>' : ""}
     `;
     viewer.querySelector(".save-minutes")?.addEventListener("click", () => saveTranscriptMinutes(record.id));
-    viewer.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (record.part === "part2" && scrollToDraftForTranscript(record)) {
+      return;
+    }
+    const target = viewer.querySelector(".minutes-box") || viewer;
+    markAttention(target, "attention-panel");
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     viewer.innerHTML = `<h2>无法查看</h2><p class="message error">${escapeHtml(err.message)}</p>`;
   }
@@ -1476,7 +1513,7 @@ function renderActionDrafts(drafts) {
     drafts = [emptyActionDraft()];
   }
   return drafts.map((draft) => `
-    <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}" data-meeting-id="${escapeHtml(draft.meeting_id || "")}" data-part="${escapeHtml(draft.part || "part2")}">
+    <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}" data-transcript-id="${escapeHtml(draft.transcript_id || "")}" data-meeting-id="${escapeHtml(draft.meeting_id || "")}" data-part="${escapeHtml(draft.part || "part2")}">
       <div class="section-title">
         <div>
           <h2>${escapeHtml(draft.title || "会议行动项初稿")}</h2>

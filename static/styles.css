@@ -615,6 +615,47 @@ p {
   margin-top: 16px;
 }
 
+.compact-upload-panel {
+  padding: 14px 16px;
+}
+
+.compact-upload-panel h2 {
+  margin-bottom: 6px;
+}
+
+.compact-upload-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.compact-upload-grid {
+  gap: 10px 12px;
+}
+
+.compact-upload-textarea {
+  min-height: 70px;
+}
+
+.inline-action-tip {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.attention-target {
+  box-shadow: 0 0 0 4px rgba(47, 125, 69, 0.2);
+}
+
+.attention-panel {
+  border-color: rgba(47, 125, 69, 0.62);
+  box-shadow: 0 0 0 4px rgba(47, 125, 69, 0.12);
+}
+
 .guidance-box {
   display: grid;
   gap: 10px;
