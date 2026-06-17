@@ -1617,6 +1617,9 @@ def looks_like_action_item(text: str) -> bool:
 
 def clean_action_title(text: str) -> str:
     title = re.sub(r"\s+", " ", str(text or "")).strip()
+    title = re.sub(r"[\u200b-\u200f\ufeff]", "", title)
+    title = title.replace("​​", "").replace("**", "")
+    title = re.sub(r"^\s*(?:第\s*)?\d{1,2}[\.、．]\s*", "", title)
     title = re.sub(r"^(行动项|任务|todo|action)\s*[：:，,]?\s*", "", title, flags=re.IGNORECASE)
     title = re.sub(r"^(然后|那|这个|就是|所以|我们|大家)\s*", "", title)
     title = title.strip(" ，。；;")
@@ -1655,6 +1658,7 @@ def concise_action_title(text: str) -> str:
         (["王总团队"], "跟进王总团队合作"),
         (["跑外联"], "每日推进外联进展"),
         (["链接价格", "1元"], "处理新账号链接定价错误"),
+        (["现场问题处理"], "处理现场问题"),
         (["内部事务", "直播间"], "优化直播间运营学习"),
         (["外部事务", "直播间"], "推进直播间外联和官方沟通"),
         (["内外部团队分工"], "确认内外部团队分工"),
