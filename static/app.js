@@ -893,7 +893,6 @@ function renderDashboard() {
             <h2>二、美国代运营周会</h2>
             <p class="muted">第一段会议围绕美国代运营每周报表和上周第一段会议纪要展开。</p>
           </div>
-          <button type="button" class="plain-btn" id="toggleWeeklyCompare">每周对比</button>
         </div>
         <div class="agency-weekly-stack">
           <div class="stack-section">
@@ -912,11 +911,14 @@ function renderDashboard() {
                 <tbody>${agencyReportHistoryHtml(historyReports)}</tbody>
               </table>
             </div>
+            <div class="split-actions report-compare-actions">
+              <button type="button" class="plain-btn" id="toggleWeeklyCompare">每周对比</button>
+            </div>
+            <div id="agencyReportCompare" class="compare-panel hidden">
+              <h3>美国代运营每周报表对比</h3>
+              ${weeklyReportCompareHtml(historyReports)}
+            </div>
           </div>
-        </div>
-        <div id="agencyReportCompare" class="compare-panel hidden">
-          <h3>美国代运营每周报表对比</h3>
-          ${weeklyReportCompareHtml(historyReports)}
         </div>
         <div id="transcriptViewer" class="panel transcript-viewer nested-viewer hidden"></div>
       </div>

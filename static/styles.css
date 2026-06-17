@@ -527,6 +527,10 @@ p {
   padding-top: 14px;
 }
 
+.report-compare-actions {
+  margin-top: 10px;
+}
+
 .agency-weekly-stack {
   display: grid;
   gap: 14px;
