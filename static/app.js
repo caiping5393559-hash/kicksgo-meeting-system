@@ -791,6 +791,50 @@ function previousPart1MinutesHtml(previousMeetingRecord) {
   `;
 }
 
+function part1MinutesHistory() {
+  const recordsByMeeting = new Map();
+  (app.data.transcript_uploads || [])
+    .filter((record) => record.part === "part1" && transcriptMinutesText(record))
+    .forEach((record) => {
+      const existing = recordsByMeeting.get(record.meeting_id);
+      if (!existing || String(record.uploaded_at || "") > String(existing.uploaded_at || "")) {
+        recordsByMeeting.set(record.meeting_id, record);
+      }
+    });
+  return [...recordsByMeeting.values()]
+    .map((record) => ({
+      record,
+      meeting: (app.data.meetings || []).find((meeting) => meeting.id === record.meeting_id),
+    }))
+    .filter((item) => item.meeting && (item.meeting.status === "已开会" || meetingTimestamp(item.meeting) <= Date.now()))
+    .sort((a, b) => meetingTimestamp(b.meeting) - meetingTimestamp(a.meeting));
+}
+
+function part1MinutesHistoryHtml() {
+  const rows = part1MinutesHistory();
+  if (!rows.length) return `<p class="muted">暂无历史第一段会议纪要。</p>`;
+  return `
+    <details class="compact-archive minutes-history" open>
+      <summary>历史第一段会议纪要</summary>
+      <div class="table-wrap compact-table-wrap">
+        <table>
+          <thead><tr><th>会议</th><th>纪要状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <tbody>
+            ${rows.map(({ meeting, record }) => `
+              <tr>
+                <td>${escapeHtml(meeting.title || meeting.name || meeting.id)}</td>
+                <td><span class="tag ${record.minutes_status === "final" ? "green" : "amber"}">${escapeHtml(transcriptMinutesStatus(record))}</span></td>
+                <td>${escapeHtml(record.minutes_updated_at || record.uploaded_at || "")}</td>
+                <td><button type="button" class="plain-btn view-transcript" data-id="${escapeHtml(record.id)}">查看纪要</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
 function fallbackMeetingLinks(links = []) {
   if (links.length) return links;
   return [
@@ -939,6 +983,7 @@ function renderDashboard() {
           <div class="stack-section">
             <h3>上周第一段会议纪要</h3>
             ${previousPart1MinutesHtml(prev)}
+            ${part1MinutesHistoryHtml()}
           </div>
           <div class="stack-section">
             <h3>美国代运营每周报表</h3>

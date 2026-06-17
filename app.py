@@ -598,6 +598,84 @@ class Store:
 store = Store()
 
 
+KNOWN_PERSON_ALIAS_RULES = [
+    {"preferred_names": ["张烜智", "Ken"], "aliases": ["njj"]},
+    {"preferred_names": ["Ronald"], "aliases": ["诺诺", "Nono", "NuoNuo", "knowknow"]},
+    {"preferred_names": ["老陈", "Chen"], "aliases": ["人生如戏"]},
+    {"preferred_names": ["袁继", "Yuanji", "Yuan Ji"], "aliases": ["愿"]},
+]
+
+
+def person_lookup_values(person: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for value in [
+        person.get("id"),
+        person.get("real_name"),
+        person.get("chinese_name"),
+        person.get("english_name"),
+        person.get("display_name"),
+        *(person.get("meeting_aliases") or []),
+        *(person.get("mention_aliases") or []),
+    ]:
+        text = str(value or "").strip()
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def active_person_ids(state: dict[str, Any]) -> set[str]:
+    return {
+        str(user.get("person_id") or "")
+        for user in state.get("users", [])
+        if user.get("status") != "disabled" and user.get("person_id")
+    }
+
+
+def find_preferred_person(state: dict[str, Any], preferred_names: list[str]) -> dict[str, Any] | None:
+    preferred = [normalize_name(name) for name in preferred_names if normalize_name(name)]
+    if not preferred:
+        return None
+    registered_ids = active_person_ids(state)
+    best: tuple[int, dict[str, Any]] | None = None
+    for person in state.get("people", []):
+        values = {normalize_name(value) for value in person_lookup_values(person)}
+        if not values:
+            continue
+        score = 0
+        for index, key in enumerate(preferred):
+            if key in values:
+                score = max(score, 100 - index)
+        if not score:
+            continue
+        if str(person.get("id") or "") in registered_ids:
+            score += 1000
+        if best is None or score > best[0]:
+            best = (score, person)
+    return best[1] if best else None
+
+
+def add_person_alias(person: dict[str, Any], alias: str) -> None:
+    alias = str(alias or "").strip()
+    if not alias:
+        return
+    for field in ["meeting_aliases", "mention_aliases"]:
+        values = person.setdefault(field, [])
+        if not isinstance(values, list):
+            values = []
+            person[field] = values
+        if alias not in values:
+            values.append(alias)
+
+
+def apply_known_person_aliases(state: dict[str, Any]) -> None:
+    for rule in KNOWN_PERSON_ALIAS_RULES:
+        person = find_preferred_person(state, rule["preferred_names"])
+        if not person:
+            continue
+        for alias in rule["aliases"]:
+            add_person_alias(person, alias)
+
+
 def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(state, dict):
         state = {}
@@ -696,6 +774,7 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
                 value = str(value or "").strip()
                 if value and value not in person["mention_aliases"]:
                     person["mention_aliases"].append(value)
+    apply_known_person_aliases(state)
     return state
 
 
