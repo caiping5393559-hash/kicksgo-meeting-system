@@ -1129,7 +1129,7 @@ function draftItemRowHtml(item = {}, index = 0) {
 }
 
 function emptyActionDraft() {
-  const meeting = lastOccurredMeeting() || currentMeeting();
+  const meeting = currentMeeting();
   return {
     id: "",
     title: "新增会议行动项初稿",
@@ -1234,7 +1234,7 @@ function draftPayloadFromCard(card) {
     .filter(Boolean);
   return {
     id: card?.dataset.draftId || "",
-    meeting_id: card?.dataset.meetingId || (lastOccurredMeeting() || currentMeeting())?.id || "",
+    meeting_id: card?.dataset.meetingId || currentMeeting()?.id || "",
     part: card?.dataset.part || "part2",
     items,
   };
