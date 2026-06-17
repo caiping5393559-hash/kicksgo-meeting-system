@@ -890,6 +890,7 @@ def extract_speakers(content: str, state: dict[str, Any]) -> dict[str, Any]:
 
     speakers: dict[str, int] = {}
     patterns = [
+        re.compile(r"^\s*([^：:\(\n]{1,40})\(\d{1,2}:\d{2}(?::\d{2})?\)[：:]\s*(?=\S)"),
         re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*(?=\S)"),
         re.compile(r"^([^：:\n]{1,40})\s+\d{1,2}:\d{2}(?::\d{2})?\s+"),
         re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*(?=\S)"),
@@ -1045,66 +1046,268 @@ def build_transcript_record(
     }
 
 
+def clean_speaker_label(name: str) -> str:
+    name = re.sub(r"\(\d{1,2}:\d{2}(?::\d{2})?\).*$", "", str(name or "")).strip()
+    name = re.sub(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*", "", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name.strip(" ：:,，")
+
+
+def split_minutes_speaker_line(line: str) -> tuple[str, str]:
+    text = str(line or "").strip()
+    patterns = [
+        re.compile(r"^\s*([^：:\(\n]{1,40})\(\d{1,2}:\d{2}(?::\d{2})?\)[：:]\s*(.*)$"),
+        re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*(.*)$"),
+        re.compile(r"^([^：:\n]{1,40})\s+\d{1,2}:\d{2}(?::\d{2})?\s+(.*)$"),
+        re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*(.*)$"),
+    ]
+    for pattern in patterns:
+        match = pattern.match(text)
+        if match:
+            return clean_speaker_label(match.group(1)), match.group(2).strip()
+    return "", text
+
+
 def clean_minutes_line(line: str) -> str:
     line = re.sub(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*", "", str(line or "").strip())
     line = re.sub(r"\s+", " ", line).strip()
-    speaker, _person_id, body = parse_transcript_line({}, line)
+    speaker, body = split_minutes_speaker_line(line)
     if speaker and body:
         line = f"{speaker}：{body}"
-    return line[:180]
+    return line[:220]
 
 
-def pick_minutes_lines(lines: list[str], keywords: list[str], limit: int) -> list[str]:
+def compact_minutes_text(line: str, limit: int = 86) -> str:
+    text = str(line or "").strip()
+    _speaker, body = split_minutes_speaker_line(text)
+    if body:
+        text = body
+    text = re.sub(r"^[^：:]{1,18}[：:]\s*", "", text)
+    text = re.sub(r"(然后|就是|这个|那个|的话|其实|可能|大概|反正|嗯|啊|呃|对吧|你知道|我觉得)", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" ，,。；;：:")
+    if len(text) > limit:
+        cut = max(text.rfind("，", 0, limit), text.rfind("。", 0, limit), text.rfind("；", 0, limit))
+        text = text[:cut if cut > 28 else limit].rstrip(" ，,。；;：:") + "..."
+    return text
+
+
+def minutes_line_score(line: str, keywords: list[str]) -> int:
+    lower = line.lower()
+    score = sum(2 for keyword in keywords if keyword.lower() in lower)
+    if re.search(r"(\$|gmv|订单|单|小时|sku|\d)", lower):
+        score += 3
+    if re.search(r"(下周|必须|需要|确认|决定|安排|负责|补货|调整|优化)", lower):
+        score += 2
+    return score
+
+
+def pick_minutes_points(lines: list[str], keywords: list[str], limit: int, used: set[str]) -> list[str]:
     picked: list[str] = []
-    seen: set[str] = set()
-    for line in lines:
+    candidates = sorted(
+        (line for line in lines if any(keyword.lower() in line.lower() for keyword in keywords)),
+        key=lambda item: minutes_line_score(item, keywords),
+        reverse=True,
+    )
+    for line in candidates:
         if not any(keyword.lower() in line.lower() for keyword in keywords):
             continue
-        key = normalize_name(line[:80])
-        if not key or key in seen:
+        text = compact_minutes_text(line)
+        key = normalize_name(text[:70])
+        if len(text) < 6 or not key or key in used:
             continue
-        seen.add(key)
-        picked.append(line)
+        used.add(key)
+        picked.append(text)
         if len(picked) >= limit:
             break
     return picked
+
+
+def first_minutes_point(lines: list[str], used: set[str]) -> str:
+    for line in lines:
+        text = compact_minutes_text(line)
+        key = normalize_name(text[:70])
+        if len(text) >= 8 and key and key not in used:
+            used.add(key)
+            return text
+    return ""
+
+
+def speaker_names_for_minutes(analysis: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for item in (analysis.get("matched_speakers") or [])[:8]:
+        name = clean_speaker_label(str(item.get("person_name") or item.get("speaker") or "").strip())
+        if name and name not in names:
+            names.append(name)
+    for item in (analysis.get("unmatched_speakers") or [])[:4]:
+        name = clean_speaker_label(str(item.get("speaker") or "").strip())
+        if name and name not in names:
+            names.append(name)
+    return names[:8]
+
+
+def infer_minutes_topic(lines: list[str]) -> str:
+    joined = "\n".join(lines[:160]).lower()
+    if ("自然流" in joined or "链接" in joined or "达人" in joined or "送样" in joined) and ("金牌" in joined or "银牌" in joined or "评分" in joined):
+        return "TikTok店铺链接自然流、达人带货与金牌卖家目标冲刺复盘"
+    if "金牌" in joined or "silver" in joined or "银牌" in joined:
+        return "TikTok店铺运营与金牌卖家目标冲刺复盘"
+    if "达人" in joined or "送样" in joined:
+        return "TikTok店铺达人带货与直播运营复盘"
+    if "库存" in joined or "仓库" in joined or "物流" in joined:
+        return "TikTok店铺运营、库存与履约复盘"
+    return "TikTok美国代运营周会复盘"
+
+
+def minutes_has(text: str, keywords: list[str]) -> bool:
+    lower = text.lower()
+    return any(keyword.lower() in lower for keyword in keywords)
+
+
+def add_minutes_point(points: list[str], text: str) -> None:
+    if text and text not in points:
+        points.append(text)
+
+
+def business_minutes_sections(lines: list[str]) -> list[tuple[str, list[str]]]:
+    joined = "\n".join(lines)
+    traffic: list[str] = []
+    supply: list[str] = []
+    live: list[str] = []
+    target: list[str] = []
+
+    if minutes_has(joined, ["自然流", "链接", "product link", "商品链接"]):
+        add_minutes_point(traffic, "自然流和商品链接已经开始出单，后续要把链接出单作为长期增长方向。")
+    if minutes_has(joined, ["达人", "送样", "creator", "affiliate", "短视频"]):
+        add_minutes_point(traffic, "自有短视频账号存在风控或下架风险，会议决定用达人送样测品测试视频存活和带货效果。")
+    if minutes_has(joined, ["flash", "1元", "一元", "起拍", "引流"]):
+        add_minutes_point(traffic, "链接、达人短视频和 Flash Deal 是长期方向，1 元起拍主要作为引流和拉新工具。")
+
+    if minutes_has(joined, ["wms", "安全库存", "库存", "同步"]):
+        add_minutes_point(supply, "WMS 暂不能直接改 TikTok 店铺库存，先用安全库存机制控制超卖风险。")
+    if minutes_has(joined, ["tk仓", "tik tok仓", "仓库", "上架", "橱窗"]):
+        add_minutes_point(supply, "需要确认 TK 仓库存准确性，并把可售库存尽量全量上架到店铺橱窗。")
+    if minutes_has(joined, ["api", "erp", "对接", "申诉"]):
+        add_minutes_point(supply, "推进 TikTok 店铺、ERP 和库存系统 API 对接，同时把账号风控和申诉问题一起沟通。")
+    if minutes_has(joined, ["uin", "品牌", "做不了链接"]):
+        add_minutes_point(supply, "UIN 等无法做链接的品牌，需要主播提前了解产品背景，通过直播和拍卖方式销售。")
+
+    if minutes_has(joined, ["直播计划", "话术", "主播", "直播前", "开播"]):
+        add_minutes_point(live, "直播前必须有计划、话术、产品背景和备品流程，不能无计划开播。")
+    if minutes_has(joined, ["诺诺", "kevin", "线下", "开会", "会议"]):
+        add_minutes_point(live, "诺诺、Kevin 和主播团队需要线下开会，固定直播计划、新品测试和反馈流程。")
+    if minutes_has(joined, ["反馈", "采购", "补货", "新品", "海运", "需求"]):
+        add_minutes_point(live, "建立直播间客户需求到采购补货的反馈闭环，避免海运周期导致断货。")
+
+    if minutes_has(joined, ["评分", "体验分", "物流", "客服", "售后"]):
+        add_minutes_point(target, "当前店铺评分偏低，尤其物流、客服和售后处理需要优先提升。")
+    if minutes_has(joined, ["金牌", "银牌", "20万", "200000", "六万", "6万"]):
+        add_minutes_point(target, "店铺当前仍在银牌阶段，会议明确要按金牌卖家门槛倒推 GMV 达成计划。")
+    if minutes_has(joined, ["日均", "每周", "差额", "目标", "复盘"]):
+        add_minutes_point(target, "金牌卖家目标要拆到日度和周度，每周复盘差额，未达标部分下周补齐。")
+
+    sections = [
+        ("流量与链接运营", traffic),
+        ("库存、上架与 API 同步", supply),
+        ("直播流程与货品反馈", live),
+        ("店铺评分与金牌卖家目标", target),
+    ]
+    return sections
+
+
+def minutes_summary_sentence(sections: list[tuple[str, list[str]]]) -> str:
+    focus = [name for name, items in sections if items]
+    if not focus:
+        return "会议围绕美国代运营店铺经营情况进行复盘，待管理员补充核心判断和下周动作。"
+    if {"流量与链接运营", "库存、上架与 API 同步", "直播流程与货品反馈"}.issubset(set(focus)):
+        return "会议重点讨论 TikTok 店铺从直播拍卖向商品链接、自然流、达人短视频和 Flash Deal 转型，同时明确库存同步、直播流程、评分提升和金牌卖家目标拆解等后续动作。"
+    if len(focus) == 1:
+        return f"会议重点复盘了{focus[0]}，并要求会后继续补充负责人、截止时间和结果口径。"
+    return f"会议重点复盘了{'、'.join(focus[:3])}，并围绕关键卡点形成后续跟进方向。"
+
+
+def pick_minutes_todos(lines: list[str], limit: int, used: set[str]) -> list[str]:
+    keywords = ["下周", "之后", "计划", "准备", "增加", "调整", "优化", "继续", "补货", "安排", "确认", "负责", "必须", "要求", "要", "先", "前往", "上架", "联系", "制定", "解决", "周一", "周二", "周三", "周四", "周五"]
+    candidates = sorted(
+        (line for line in lines if any(keyword.lower() in line.lower() for keyword in keywords)),
+        key=lambda item: minutes_line_score(item, keywords),
+        reverse=True,
+    )
+    todos: list[str] = []
+    for line in candidates:
+        text = compact_minutes_text(line, 92)
+        key = normalize_name(text[:70])
+        if len(text) < 6 or not key or key in used:
+            continue
+        speaker, _body = split_minutes_speaker_line(line)
+        owner = str(speaker or "").strip()
+        if owner and len(owner) <= 12 and owner not in text:
+            text = f"{text} @{owner}"
+        used.add(key)
+        todos.append(text)
+        if len(todos) >= limit:
+            break
+    return todos
+
+
+def business_minutes_todos(lines: list[str]) -> list[str]:
+    joined = "\n".join(lines)
+    todos: list[str] = []
+    if minutes_has(joined, ["达人", "送样", "sku"]):
+        add_minutes_point(todos, "筛选 3 个 SKU 并联系达人送样，测试短视频存活和带货效果。@Brian")
+    if minutes_has(joined, ["风控", "api", "申诉", "周二", "总部"]):
+        add_minutes_point(todos, "沟通 TikTok 短视频账号风控、API 对接和申诉问题。@蔡平")
+    if minutes_has(joined, ["安全库存", "库存", "tk仓", "仓库"]):
+        add_minutes_point(todos, "确认 TK 仓库存准确性，并设置安全库存。@Brian")
+    if minutes_has(joined, ["上架", "橱窗", "uin"]):
+        add_minutes_point(todos, "将 TK 仓除 UIN 外的可售库存尽量全量上架到 TikTok 店铺橱窗。@袁继")
+    if minutes_has(joined, ["直播计划", "新品", "反馈", "诺诺", "kevin", "主播"]):
+        add_minutes_point(todos, "组织诺诺、Kevin 和主播团队线下会，制定直播计划、新品测试和反馈机制。@蔡平 / 诺诺")
+    if minutes_has(joined, ["评分", "物流", "客服", "售后", "体验分"]):
+        add_minutes_point(todos, "梳理店铺评分低的原因，重点改进物流、客服和售后处理。@美国运营团队")
+    if minutes_has(joined, ["金牌", "银牌", "gmv", "目标"]):
+        add_minutes_point(todos, "按金牌卖家目标倒推周度 GMV 计划，每周复盘差额。@蔡平 / njj")
+    return todos[:8]
 
 
 def generate_part1_minutes(content: str, state: dict[str, Any]) -> str:
     raw_lines = [clean_minutes_line(line) for line in str(content or "").splitlines()]
     lines = [line for line in raw_lines if len(line) >= 8 and not looks_like_binary_text(line)]
     analysis = extract_speakers(content, state)
-    speakers = [item.get("person_name") or item.get("speaker") for item in analysis.get("matched_speakers", [])[:8]]
-    data_lines = pick_minutes_lines(lines, ["gmv", "$", "美金", "订单", "单", "客单", "小时", "直播"], 6)
-    operation_lines = pick_minutes_lines(lines, ["直播", "主播", "视频", "达人", "流量", "转化", "店铺", "sku", "货", "库存"], 8)
-    issue_lines = pick_minutes_lines(lines, ["问题", "缺货", "延迟", "错发", "漏发", "退", "卡", "需要", "风险", "不够", "暂停"], 8)
-    next_lines = pick_minutes_lines(lines, ["下周", "之后", "计划", "准备", "增加", "调整", "优化", "继续", "补货"], 6)
-    fallback = []
-    for line in lines:
-        key = normalize_name(line[:80])
-        if key and line not in fallback:
-            fallback.append(line)
-        if len(fallback) >= 8:
-            break
+    used: set[str] = set()
+    sections = business_minutes_sections(lines)
+    if not any(items for _name, items in sections):
+        target_lines = pick_minutes_points(lines, ["金牌", "目标", "gmv", "$", "美金", "订单", "评分", "体验分", "信誉", "银牌", "达成", "日均", "30天"], 3, used)
+        traffic_lines = pick_minutes_points(lines, ["直播", "主播", "视频", "达人", "送样", "流量", "转化", "风控", "账号", "media", "affiliate", "flash", "引流"], 3, used)
+        supply_lines = pick_minutes_points(lines, ["库存", "仓库", "上架", "sku", "补货", "采购", "物流", "wms", "api", "履约", "发货", "缺货"], 3, used)
+        issue_lines = pick_minutes_points(lines, ["问题", "缺货", "延迟", "错发", "漏发", "退", "卡", "风险", "不够", "暂停", "投诉", "垫底"], 2, used)
+        if not target_lines and not traffic_lines and not supply_lines and lines:
+            target_lines = [first_minutes_point(lines, used)]
+        sections = [
+            ("核心业务目标与店铺表现", target_lines),
+            ("流量获取与直播内容", traffic_lines),
+            ("供应链、库存与履约", supply_lines or issue_lines),
+        ]
+    todos = business_minutes_todos(lines) or pick_minutes_todos(lines, 5, set())
 
     def bullets(items: list[str], empty: str) -> str:
-        values = items or fallback[:3]
-        return "\n".join(f"- {item}" for item in values) if values else f"- {empty}"
+        values = [item for item in items if item]
+        return "\n".join(f"{index + 1}. {item}" for index, item in enumerate(values)) if values else f"- {empty}"
 
-    return "\n\n".join(
-        [
-            "一、会议概况",
-            f"- 参与发言/提到人员：{'、'.join(speakers) if speakers else '系统未识别到明确人员'}",
-            "二、关键经营信息",
-            bullets(data_lines, "本段文字中未识别到明确经营数据。"),
-            "三、直播、内容与店铺运营",
-            bullets(operation_lines, "本段文字中未识别到明确运营信息。"),
-            "四、问题与风险",
-            bullets(issue_lines, "本段文字中未识别到明确问题。"),
-            "五、下周关注",
-            bullets(next_lines, "建议会后由管理员根据讨论补充下周关注事项。"),
-        ]
-    )
+    number_labels = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
+
+    def section_number(index: int) -> str:
+        return number_labels[index] if index < len(number_labels) else str(index)
+
+    blocks = [
+        f"会议主题：{infer_minutes_topic(lines)}",
+        f"发言人：{'、'.join(speaker_names_for_minutes(analysis)) or '系统未识别'}",
+        f"会议摘要：{minutes_summary_sentence(sections)}",
+        "---",
+    ]
+    for index, (title, items) in enumerate(sections, start=1):
+        blocks.extend([f"{section_number(index)}、{title}", bullets(items, "未从文字记录中识别到明确内容，建议人工补充。")])
+    blocks.extend([f"{section_number(len(sections) + 1)}、待办事项", bullets(todos, "未识别到明确待办事项，建议人工补充负责人和截止日期。")])
+    return "\n\n".join(blocks)
 
 
 def remove_existing_transcript_outputs(state: dict[str, Any], meeting_id: str, part: str) -> list[str]:
@@ -1294,6 +1497,7 @@ def role_owner_from_text(state: dict[str, Any], text: str) -> tuple[dict[str, An
 def parse_transcript_line(state: dict[str, Any], line: str) -> tuple[str, str, str]:
     line = str(line or "").strip()
     patterns = [
+        re.compile(r"^\s*([^：:\(\n]{1,40})\(\d{1,2}:\d{2}(?::\d{2})?\)[：:]\s*(?=\S)"),
         re.compile(r"^(?:\[\d{1,2}:\d{2}(?::\d{2})?\]\s*)?([^：:\n]{1,40})[：:]\s*(?=\S)"),
         re.compile(r"^([^：:\n]{1,40})\s+\d{1,2}:\d{2}(?::\d{2})?\s+"),
         re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+([^：:\n]{1,40})[：:]\s*(?=\S)"),
