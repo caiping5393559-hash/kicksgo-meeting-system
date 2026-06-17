@@ -2593,16 +2593,19 @@ class AppHandler(BaseHTTPRequestHandler):
         data = {
             "meeting_id": str(payload.get("meeting_id") or ""),
             "part": str(payload.get("part") or "part2"),
-            "title": str(payload.get("title") or ""),
+            "title": clean_action_title(payload.get("title") or ""),
             "owner_person_id": str(payload.get("owner_person_id") or ""),
             "owner_text": str(payload.get("owner_text") or ""),
             "due_date": str(payload.get("due_date") or ""),
-            "priority": str(payload.get("priority") or "P1"),
+            "priority": str(payload.get("priority") or "P1-本周必须"),
             "status": str(payload.get("status") or "未开始"),
             "notes": str(payload.get("notes") or ""),
             "updated_at": now_iso(),
             "updated_by": user.get("id"),
         }
+        if not data["title"]:
+            self.send_json({"ok": False, "error": "行动项事项不能为空"}, 400)
+            return
         if existing:
             existing.update(data)
             saved = existing

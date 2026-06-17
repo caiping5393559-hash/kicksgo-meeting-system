@@ -1159,6 +1159,41 @@ tr:last-child td {
   align-items: center;
 }
 
+.published-action-table table {
+  min-width: 1380px;
+  table-layout: fixed;
+}
+
+.published-action-title {
+  min-height: 72px;
+  line-height: 1.55;
+}
+
+.published-col-meeting {
+  width: 220px;
+}
+
+.published-col-title {
+  width: 430px;
+}
+
+.published-col-owner {
+  width: 140px;
+}
+
+.published-col-priority,
+.published-col-status {
+  width: 150px;
+}
+
+.published-col-due {
+  width: 170px;
+}
+
+.published-col-actions {
+  width: 160px;
+}
+
 @media (max-width: 920px) {
   .app-shell {
     grid-template-columns: 1fr;

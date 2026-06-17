@@ -1356,8 +1356,17 @@ function renderMeetingOps() {
         ${renderActionDrafts(actionDrafts)}
         <div class="panel">
           <h2>已发布行动项</h2>
-          <div class="table-wrap">
+          <div class="table-wrap published-action-table">
             <table>
+              <colgroup>
+                <col class="published-col-meeting" />
+                <col class="published-col-title" />
+                <col class="published-col-owner" />
+                <col class="published-col-priority" />
+                <col class="published-col-status" />
+                <col class="published-col-due" />
+                <col class="published-col-actions" />
+              </colgroup>
               <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>操作</th></tr></thead>
               <tbody>
                 ${actionRowsHtml(actions, true) || '<tr><td colspan="7" class="muted">暂无行动项</td></tr>'}
@@ -1592,8 +1601,8 @@ function renderActionDrafts(drafts) {
   `).join("");
 }
 
-function actionRowsHtml(items, canDelete = false) {
-  return items.map((a) => `
+function actionRowsHtml(items, canEdit = false) {
+  return items.map((a) => canEdit ? publishedActionRowHtml(a) : `
     <tr>
       <td>${escapeHtml(meetingName(a.meeting_id))}</td>
       <td>${escapeHtml(a.title)}</td>
@@ -1601,9 +1610,29 @@ function actionRowsHtml(items, canDelete = false) {
       <td>${escapeHtml(a.priority)}</td>
       <td>${escapeHtml(a.status)}</td>
       <td>${escapeHtml(a.due_date)}</td>
-      <td>${canDelete ? `<button class="plain-btn danger-text delete-action" data-id="${a.id}">删除</button>` : ""}</td>
+      <td></td>
     </tr>
   `).join("");
+}
+
+function publishedActionRowHtml(a) {
+  return `
+    <tr class="published-action-row" data-id="${escapeHtml(a.id || "")}" data-meeting-id="${escapeHtml(a.meeting_id || "")}" data-part="${escapeHtml(a.part || "part2")}">
+      <td>${escapeHtml(meetingName(a.meeting_id))}</td>
+      <td><textarea class="published-action-title compact-textarea">${escapeHtml(a.title || "")}</textarea></td>
+      <td><select class="published-action-owner">${registeredPersonOptions(a.owner_person_id || "", "待定")}</select></td>
+      <td><select class="published-action-priority compact-input">${actionPriorityOptions(a.priority || "P1-本周必须")}</select></td>
+      <td><select class="published-action-status compact-input">${actionStatusOptions(a.status || "未开始")}</select></td>
+      <td><input class="published-action-due" type="date" value="${escapeHtml(a.due_date || "")}" /></td>
+      <td>
+        <input type="hidden" class="published-action-notes" value="${escapeHtml(a.notes || "")}" />
+        <div class="draft-row-actions">
+          <button type="button" class="plain-btn save-published-action">修改</button>
+          <button type="button" class="plain-btn danger-text delete-action" data-id="${escapeHtml(a.id || "")}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 function renderActionManage() {
@@ -1617,6 +1646,7 @@ function wireActionManagement() {
   document.querySelectorAll(".save-draft-row").forEach((btn) => btn.addEventListener("click", () => saveDraftRow(btn)));
   document.querySelectorAll(".add-draft-row").forEach((btn) => btn.addEventListener("click", () => addDraftRow(btn)));
   document.querySelectorAll(".remove-draft-row").forEach((btn) => btn.addEventListener("click", () => removeDraftRow(btn)));
+  document.querySelectorAll(".save-published-action").forEach((btn) => btn.addEventListener("click", () => savePublishedAction(btn)));
   document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
 }
 
@@ -1790,6 +1820,43 @@ async function approveActionDraft(button) {
     setTimeout(() => showDraftMessage(res.draft?.id || targetDraftId, `已保存正式发布 ${res.actions?.length || 0} 条行动项`, true), 0);
   } catch (err) {
     showDraftCardMessage(card, err.message);
+  } finally {
+    done();
+  }
+}
+
+async function savePublishedAction(button) {
+  const row = button.closest(".published-action-row");
+  if (!row) return;
+  const ownerSelect = row.querySelector(".published-action-owner");
+  const done = setBusy(button, "保存中...");
+  try {
+    const res = await api("/api/actions/save", {
+      method: "POST",
+      body: {
+        id: row.dataset.id || "",
+        meeting_id: row.dataset.meetingId || "",
+        part: row.dataset.part || "part2",
+        title: row.querySelector(".published-action-title")?.value || "",
+        owner_person_id: ownerSelect?.value || "",
+        owner_text: ownerSelect?.selectedOptions?.[0]?.textContent || "",
+        priority: row.querySelector(".published-action-priority")?.value || "P1-本周必须",
+        status: row.querySelector(".published-action-status")?.value || "未开始",
+        due_date: row.querySelector(".published-action-due")?.value || "",
+        notes: row.querySelector(".published-action-notes")?.value || "",
+      },
+    });
+    upsertById("action_items", res.action);
+    renderMeetingOps();
+    setTimeout(() => {
+      const savedRow = document.querySelector(`.published-action-row[data-id="${CSS.escape(res.action?.id || "")}"]`);
+      if (savedRow) {
+        savedRow.classList.add("attention-panel");
+        savedRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 0);
+  } catch (err) {
+    alert(err.message);
   } finally {
     done();
   }
