@@ -804,7 +804,6 @@ function renderDashboard() {
   const prev = previousMeeting();
   const links = app.data.settings?.meeting_links || [];
   const reports = app.data.weekly_reports || [];
-  const transcripts = app.data.transcript_uploads || [];
   const actions = app.data.action_items || [];
   const notes = app.data.pre_meeting_notes || [];
   const reportPersonIds = agencyReportPersonIds();
@@ -816,8 +815,6 @@ function renderDashboard() {
     : canFillAgencyReport()
       ? `<button type="button" class="plain-btn metric-action open-agency-report" data-meeting-id="${escapeHtml(meeting?.id || "")}" data-person-id="${escapeHtml(app.user?.person_id || "")}">去填写</button>`
       : "";
-  const part1Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part1");
-  const part2Uploaded = transcripts.some((t) => t.meeting_id === meeting?.id && t.part === "part2");
   const previousActions = actions.filter((a) => a.meeting_id === prev?.id);
   setTitle("周会首页", "腾讯会议设置、美国代运营周会、内部经营复盘流程。");
   qs("#content").innerHTML = `
@@ -832,8 +829,6 @@ function renderDashboard() {
         </div>
         <div class="metric-row">
           <div class="metric"><span>下次周会</span><strong>${escapeHtml(meeting?.title || "暂无会议")}</strong></div>
-          <div class="metric"><span>第1段文字记录</span><strong>${transcriptMetricText(part1Uploaded, meeting)}</strong></div>
-          <div class="metric"><span>第2段文字记录</span><strong>${transcriptMetricText(part2Uploaded, meeting)}</strong></div>
           <div class="metric"><span>会前备注</span><strong>${notes.filter((n) => n.meeting_id === meeting?.id).length} 条</strong></div>
         </div>
         ${dashboardMeetingLinksHtml(links)}
