@@ -1620,9 +1620,58 @@ def clean_action_title(text: str) -> str:
     title = re.sub(r"^(行动项|任务|todo|action)\s*[：:，,]?\s*", "", title, flags=re.IGNORECASE)
     title = re.sub(r"^(然后|那|这个|就是|所以|我们|大家)\s*", "", title)
     title = title.strip(" ，。；;")
-    if len(title) > 160:
-        title = title[:157].rstrip() + "..."
+    title = concise_action_title(title)
     return title
+
+
+def concise_action_title(text: str) -> str:
+    body = re.sub(r"\s+", " ", str(text or "")).strip(" ，。；;")
+    if not body:
+        return ""
+    lower = body.lower()
+    rules = [
+        (["200", "单双", "独立", "链接"], "制作 200 双单双库存拍卖链接"),
+        (["大货", "链接"], "确认大货链接销售逻辑"),
+        (["大货", "售卖逻辑"], "确认大货链接销售逻辑"),
+        (["大货", "拍卖关联"], "确认大货链接销售逻辑"),
+        (["200", "单双", "上架"], "上架并迁移 200 双单双鞋"),
+        (["赠品", "链接"], "制作赠品链接模板"),
+        (["lulemon", "aio"], "解决 Lulemon 和 AIo 供应端问题"),
+        (["推荐供应单品"], "补齐推荐供应单品资料"),
+        (["供应单品", "款号"], "补齐供应商款式和货号"),
+        (["未上架", "授权"], "授权主店未上架产品上架"),
+        (["评分", "300"], "跟进账号评分恢复到 300 分"),
+        (["评分", "149"], "跟进账号评分恢复"),
+        (["安全库存"], "确认安全库存方案"),
+        (["库存", "同步"], "确认库存同步方案"),
+        (["api", "对接"], "推进 API 对接"),
+        (["达人", "送样"], "推进达人送样测品"),
+        (["直播", "流程"], "制定直播执行流程"),
+        (["客服", "评分"], "提升客服评分"),
+        (["物流", "评分"], "提升物流评分"),
+    ]
+    for keywords, title in rules:
+        if all(keyword.lower() in lower for keyword in keywords):
+            return title
+
+    sentences = [part.strip(" ，。；;") for part in re.split(r"[。；;！!\n]", body) if part.strip(" ，。；;")]
+    action_verbs = ["确认", "制作", "上架", "解决", "授权", "补齐", "推进", "制定", "整理", "检查", "同步", "联系", "跟进", "优化", "处理", "恢复", "建立", "调整"]
+    chosen = ""
+    for sentence in sentences:
+        if any(verb in sentence for verb in action_verbs):
+            chosen = sentence
+            break
+    if not chosen and sentences:
+        chosen = sentences[0]
+    chosen = re.sub(r"^[^，。；;]{1,16}(需要|需|要|负责|确认|制作|上架|解决)", r"\1", chosen)
+    chosen = re.sub(r"^(需要|需|要|让|把|请|要求|必须|继续|先|再)\s*", "", chosen)
+    chosen = re.sub(r"^(由|让)?[^，。；;]{1,12}(负责|来|去)\s*", "", chosen)
+    chosen = re.sub(r"^(确认|制作|上架|解决|授权|补齐|推进|制定|整理|检查|同步|联系|跟进|优化|处理|恢复|建立|调整)", r"\1", chosen)
+    chosen = chosen.strip(" ，。；;")
+    if len(chosen) > 42:
+        cut = max(chosen.rfind("，", 0, 42), chosen.rfind("、", 0, 42), chosen.rfind(" ", 0, 42))
+        chosen = chosen[:cut if cut > 16 else 42].rstrip(" ，、。；;") + "..."
+    return chosen
 
 
 def infer_action_owner(state: dict[str, Any], body: str, speaker_person_id: str = "") -> tuple[str, str, str]:

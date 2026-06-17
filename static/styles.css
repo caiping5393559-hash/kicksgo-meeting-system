@@ -1084,12 +1084,59 @@ tr:last-child td {
   gap: 14px;
 }
 
+.draft-table {
+  max-width: 100%;
+}
+
 .draft-table table {
-  min-width: 1180px;
+  min-width: 1680px;
+  table-layout: fixed;
 }
 
 .draft-table textarea {
-  min-height: 58px;
+  min-height: 92px;
+  line-height: 1.55;
+}
+
+.draft-table .draft-title {
+  min-height: 104px;
+}
+
+.draft-table .draft-notes {
+  min-height: 104px;
+  color: var(--muted);
+}
+
+.draft-col-index {
+  width: 44px;
+}
+
+.draft-col-title {
+  width: 500px;
+}
+
+.draft-col-owner {
+  width: 130px;
+}
+
+.draft-col-priority {
+  width: 150px;
+}
+
+.draft-col-due {
+  width: 170px;
+}
+
+.draft-col-status {
+  width: 150px;
+}
+
+.draft-col-notes {
+  width: 360px;
+}
+
+.draft-col-actions {
+  width: 170px;
 }
 
 .draft-table .row-index {

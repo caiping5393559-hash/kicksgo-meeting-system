@@ -1568,6 +1568,16 @@ function renderActionDrafts(drafts) {
       </div>
       <div class="table-wrap draft-table">
         <table>
+          <colgroup>
+            <col class="draft-col-index" />
+            <col class="draft-col-title" />
+            <col class="draft-col-owner" />
+            <col class="draft-col-priority" />
+            <col class="draft-col-due" />
+            <col class="draft-col-status" />
+            <col class="draft-col-notes" />
+            <col class="draft-col-actions" />
+          </colgroup>
           <thead><tr><th>#</th><th>事项</th><th>负责人</th><th>优先级</th><th>截止</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
           <tbody>${(draft.items || []).map((item, index) => draftItemRowHtml(item, index)).join("") || '<tr><td colspan="8" class="muted">系统未识别到明确行动项，可以手动新增一行。</td></tr>'}</tbody>
         </table>
