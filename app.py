@@ -58,6 +58,27 @@ ROLE_AGENDA_MAP = {
     "role_partner_boss": AGENDA_DECISION,
 }
 
+REPORT_RATE_FIELDS = {
+    "conversion_rate",
+    "short_video_pct",
+    "organic_pct",
+    "search_pct",
+    "positive_rate",
+    "store_conversion_rate",
+    "wrong_ship_rate",
+    "live_click_rate",
+    "click_conversion_rate",
+    "preview_click_conversion_rate",
+    "sku_order_rate",
+    "comment_rate",
+    "follow_rate",
+    "share_rate",
+    "like_rate",
+}
+
+REPORT_SECONDS_FIELDS = {"avg_watch_duration"}
+REPORT_HOURS_FIELDS = {"live_hours"}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -98,6 +119,113 @@ def normalize_name(value: str) -> str:
     value = str(value or "").strip().lower()
     value = re.sub(r"[\s\-_()（）【】\[\].,，。:：]+", "", value)
     return value
+
+
+def first_number(value: str) -> float | None:
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def parse_duration_seconds(value: str) -> float | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    colon = re.fullmatch(r"\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*", text)
+    if colon:
+        first = int(colon.group(1))
+        second = int(colon.group(2))
+        third = int(colon.group(3) or 0)
+        return float(first * 3600 + second * 60 + third) if colon.group(3) else float(first * 60 + second)
+    minute_second = re.search(r"(\d+(?:\.\d+)?)\s*(?:分|min|m)\s*(\d+(?:\.\d+)?)?\s*(?:秒|sec|s)?", text)
+    if minute_second:
+        minutes = float(minute_second.group(1))
+        seconds = float(minute_second.group(2) or 0)
+        return minutes * 60 + seconds
+    second_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:秒|sec|s)", text)
+    if second_match:
+        return float(second_match.group(1))
+    return first_number(text)
+
+
+def parse_duration_hours(value: str) -> float | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    colon = re.fullmatch(r"\s*(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?\s*", text)
+    if colon:
+        hours = int(colon.group(1))
+        minutes = int(colon.group(2))
+        seconds = int(colon.group(3) or 0)
+        return hours + minutes / 60 + seconds / 3600
+    hour_minute = re.search(r"(\d+(?:\.\d+)?)\s*(?:小时|小時|h|hr|hour|hours)\s*(\d+(?:\.\d+)?)?\s*(?:分|min|m)?", text)
+    if hour_minute:
+        hours = float(hour_minute.group(1))
+        minutes = float(hour_minute.group(2) or 0)
+        return hours + minutes / 60
+    minute_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:分|min|m)", text)
+    if minute_match:
+        return float(minute_match.group(1)) / 60
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    if len(numbers) >= 2:
+        hours = float(numbers[0])
+        minutes = float(numbers[1])
+        if 0 <= minutes < 60:
+            return hours + minutes / 60
+    return first_number(text)
+
+
+def parse_report_metric_value(field: str, value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if field in REPORT_SECONDS_FIELDS:
+        parsed = parse_duration_seconds(text)
+    elif field in REPORT_HOURS_FIELDS:
+        parsed = parse_duration_hours(text)
+    else:
+        compact = (
+            text.replace(",", "")
+            .replace("，", "")
+            .replace("$", "")
+            .replace("＄", "")
+            .replace("美元", "")
+            .replace("美金", "")
+            .replace("usd", "")
+            .replace("USD", "")
+        )
+        parsed = first_number(compact)
+        if parsed is None:
+            return None
+        lower = compact.lower()
+        multiplier = 1.0
+        if re.search(r"\d\s*(?:k|千)", lower):
+            multiplier = 1_000.0
+        elif re.search(r"\d\s*(?:m|million|百万|百萬)", lower):
+            multiplier = 1_000_000.0
+        elif re.search(r"\d\s*(?:b|billion|十亿|十億)", lower):
+            multiplier = 1_000_000_000.0
+        elif re.search(r"\d\s*万", lower):
+            multiplier = 10_000.0
+        parsed *= multiplier
+        if field in REPORT_RATE_FIELDS and "%" not in compact and "％" not in compact and abs(parsed) <= 1:
+            parsed *= 100
+    return round(float(parsed), 4) if parsed is not None else None
+
+
+def normalize_weekly_report_metrics(fields: dict[str, Any]) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    if not isinstance(fields, dict):
+        return metrics
+    for field, value in fields.items():
+        parsed = parse_report_metric_value(str(field), value)
+        if parsed is not None:
+            metrics[str(field)] = parsed
+    return metrics
 
 
 def extract_docx_text(blob: bytes) -> str:
@@ -780,6 +908,9 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
                 value = str(value or "").strip()
                 if value and value not in person["mention_aliases"]:
                     person["mention_aliases"].append(value)
+    for report in state.setdefault("weekly_reports", []):
+        fields = report.get("fields") if isinstance(report, dict) else {}
+        report["metrics"] = normalize_weekly_report_metrics(fields if isinstance(fields, dict) else {})
     apply_known_person_aliases(state)
     return state
 
@@ -2427,7 +2558,13 @@ class AppHandler(BaseHTTPRequestHandler):
         if not existing:
             existing = {"id": new_id("report"), "meeting_id": meeting_id, "person_id": person_id, "created_at": now_iso()}
             state["weekly_reports"].append(existing)
-        existing.update({"fields": fields, "status": payload.get("status") or "已保存", "updated_at": now_iso(), "updated_by": user.get("id")})
+        existing.update({
+            "fields": fields,
+            "metrics": normalize_weekly_report_metrics(fields),
+            "status": payload.get("status") or "已保存",
+            "updated_at": now_iso(),
+            "updated_by": user.get("id"),
+        })
         audit(state, user, "save_report", {"meeting_id": meeting_id, "person_id": person_id})
         store.save(state, "save_report")
         self.send_json({"ok": True, "report": existing})

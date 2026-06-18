@@ -807,24 +807,52 @@ function agencyReports() {
 }
 
 function reportNumericValue(report, key) {
-  const raw = String(report?.fields?.[key] || "").replace(/,/g, "");
-  const value = Number(raw.replace(/[^\d.-]/g, ""));
-  return Number.isFinite(value) ? value : 0;
+  const metric = Number(report?.metrics?.[key]);
+  if (Number.isFinite(metric)) return metric;
+  const raw = String(report?.fields?.[key] || "").trim();
+  if (!raw) return 0;
+  let text = raw
+    .replace(/,/g, "")
+    .replace(/，/g, "")
+    .replace(/\$/g, "")
+    .replace(/＄/g, "")
+    .replace(/美元|美金|USD|usd/g, "");
+  const match = text.match(/[-+]?\d+(?:\.\d+)?/);
+  if (!match) return 0;
+  let value = Number(match[0]);
+  if (!Number.isFinite(value)) return 0;
+  const lower = text.toLowerCase();
+  if (/\d\s*(k|千)/.test(lower)) value *= 1000;
+  else if (/\d\s*(m|million|百万|百萬)/.test(lower)) value *= 1000000;
+  else if (/\d\s*(b|billion|十亿|十億)/.test(lower)) value *= 1000000000;
+  else if (/\d\s*万/.test(lower)) value *= 10000;
+  return value;
+}
+
+function formatCompareMetric(value, prefix = "", suffix = "") {
+  if (!Number.isFinite(value) || value === 0) return "-";
+  const formatted = value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return `${prefix}${formatted}${suffix}`;
 }
 
 function weeklyReportCompareHtml(reports) {
   const rows = reports.slice().reverse().slice(-8);
   if (!rows.length) return `<p class="muted">暂无已保存的美国代运营每周报表，保存后这里会出现对比。</p>`;
   const metrics = [
-    ["total_gmv", "总GMV", "$"],
-    ["total_orders", "订单量", ""],
-    ["live_gmv", "直播GMV", "$"],
-    ["non_live_gmv", "非直播GMV", "$"],
-    ["affiliate_gmv", "达人GMV", "$"],
+    ["total_gmv", "总GMV", "$", ""],
+    ["total_orders", "订单量", "", ""],
+    ["live_gmv", "直播GMV", "$", ""],
+    ["auction_gmv", "拍卖GMV", "$", ""],
+    ["audience_count", "观众数", "", ""],
+    ["exposure_count", "曝光量", "", ""],
+    ["live_click_rate", "直播点击率", "", "%"],
+    ["sku_order_rate", "SKU订单率", "", "%"],
+    ["avg_watch_duration", "平均观看时长", "", "秒"],
+    ["affiliate_gmv", "达人GMV", "$", ""],
   ];
   return `
     <div class="compare-grid">
-      ${metrics.map(([key, label, prefix]) => {
+      ${metrics.map(([key, label, prefix, suffix]) => {
         const max = Math.max(...rows.map((report) => reportNumericValue(report, key)), 1);
         return `
           <div class="compare-card">
@@ -836,7 +864,7 @@ function weeklyReportCompareHtml(reports) {
                 <div class="compare-row">
                   <span>${escapeHtml(meetingName(report.meeting_id).replace(" Kicksgo 周会", ""))}</span>
                   <div class="compare-bar"><i style="width:${pct}%"></i></div>
-                  <strong>${escapeHtml(value ? `${prefix}${value}` : "-")}</strong>
+                  <strong>${escapeHtml(formatCompareMetric(value, prefix, suffix))}</strong>
                 </div>
               `;
             }).join("")}
