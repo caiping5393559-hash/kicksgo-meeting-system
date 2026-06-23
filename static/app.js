@@ -53,30 +53,19 @@ const roleAgendaMap = {
 };
 
 const reportSections = [
-  ["1. 本周总览", [
-    ["total_gmv", "总GMV"], ["total_orders", "总订单量"], ["aov", "平均客单价"],
-    ["trend", "本周趋势", "select", ["增长", "稳定", "下降"]],
-    ["core_conclusion", "核心结论", "textarea"],
-  ]],
-  ["2. 直播数据（周汇总）", [
+  ["1. 直播数据（周汇总）", [
     ["live_count", "直播次数"], ["live_hours", "直播总时长"], ["live_gmv", "直播GMV / 可归因GMV"],
     ["live_orders", "直播订单量"], ["auction_gmv", "拍卖GMV"], ["buy_now_gmv", "立即购买GMV"],
     ["audience_count", "观众数"], ["exposure_count", "曝光量"], ["product_view_count", "商品浏览量"],
     ["avg_watch_duration", "平均观看时长"], ["live_click_rate", "直播点击率"], ["sku_order_rate", "SKU订单率"],
     ["live_summary", "直播结论/异常说明", "textarea"],
   ]],
-  ["3. 非直播数据（周汇总）", [
+  ["2. 非直播数据（周汇总）", [
     ["non_live_gmv", "非直播GMV"], ["non_live_orders", "非直播订单量"], ["short_video_pct", "短视频占比"],
     ["organic_pct", "自然流量占比"], ["search_pct", "搜索流量占比"], ["video_count", "本周视频数"],
     ["viral_video_count", "爆款视频数"], ["avg_views", "平均播放量"], ["affiliate_gmv", "达人带货GMV"],
     ["non_live_conclusion", "非直播增长能力", "select", ["强", "中", "弱"]],
     ["non_live_summary", "非直播结论/异常说明", "textarea"],
-  ]],
-  ["4. 下周重点", [
-    ["issue_point", "主要瓶颈", "select", ["流量", "转化", "选品", "节奏", "库存", "物流", "达人", "其他"]],
-    ["issue_other", "瓶颈说明", "textarea"],
-    ["must_do", "下周必须执行", "textarea"],
-    ["support_needed", "需要公司配合", "textarea"],
   ]],
 ];
 
@@ -591,7 +580,7 @@ function meetingHistoryRows() {
         <td>${escapeHtml([meeting.us_date, meeting.us_time].filter(Boolean).join(" "))}</td>
         <td>${transcriptPartStatusHtml(meeting.id, "part1")}</td>
         <td>${transcriptPartStatusHtml(meeting.id, "part2")}</td>
-        <td>${records.length ? `${records.length} 次 / ${escapeHtml(latest?.uploaded_at || "")}` : '<span class="muted">未上传</span>'}</td>
+        <td>${records.length ? `已处理 / ${escapeHtml(latest?.uploaded_at || "")}` : '<span class="muted">未上传</span>'}</td>
       </tr>
     `;
   }).join("") || '<tr><td colspan="5" class="muted">暂无会议</td></tr>';
@@ -800,6 +789,19 @@ function reportNumericValue(report, key) {
   return value;
 }
 
+function autoFillReportTotals(fields) {
+  const liveGmv = reportNumericValue({ fields }, "live_gmv");
+  const nonLiveGmv = reportNumericValue({ fields }, "non_live_gmv");
+  const liveOrders = reportNumericValue({ fields }, "live_orders");
+  const nonLiveOrders = reportNumericValue({ fields }, "non_live_orders");
+  const totalGmv = liveGmv + nonLiveGmv;
+  const totalOrders = liveOrders + nonLiveOrders;
+  if (totalGmv > 0) fields.total_gmv = String(Number(totalGmv.toFixed(2)));
+  if (totalOrders > 0) fields.total_orders = String(Number(totalOrders.toFixed(2)));
+  if (totalGmv > 0 && totalOrders > 0) fields.aov = String(Number((totalGmv / totalOrders).toFixed(2)));
+  return fields;
+}
+
 function formatCompareMetric(value, prefix = "", suffix = "") {
   if (!Number.isFinite(value) || value === 0) return "-";
   const formatted = value.toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -924,10 +926,19 @@ function part1MinutesHistoryHtml() {
 }
 
 function fallbackMeetingLinks(links = []) {
-  if (links.length) return links;
+  const existing = Array.isArray(links) ? links.filter(Boolean) : [];
+  const primary = existing.find((link) => link.id === "link_weekly") || existing[0];
+  if (primary) {
+    return [{
+      ...primary,
+      id: primary.id || "link_weekly",
+      part: "full",
+      title: primary.title || "Kicksgo 每周腾讯会议",
+      notes: primary.notes || "会员会议，一次开完整场周会。系统上传一次完整文字记录后自动拆分纪要和行动项。",
+    }];
+  }
   return [
-    { id: "link_part1", part: "part1", title: "第一部分：美国代运营每周报表", url: "", meeting_id: "", password: "", host: "美国代运营/主持人", notes: "" },
-    { id: "link_part2", part: "part2", title: "第二部分：内部经营复盘会", url: "", meeting_id: "", password: "", host: "主持人", notes: "" },
+    { id: "link_weekly", part: "full", title: "Kicksgo 每周腾讯会议", url: "", meeting_id: "", password: "", host: "会议主持人", notes: "会员会议，一次开完整场周会。系统上传一次完整文字记录后自动拆分纪要和行动项。" },
   ];
 }
 
@@ -1234,7 +1245,7 @@ function renderReport() {
     : (canEditReport ? app.user.person_id : defaultPersonId);
   const report = (app.data.weekly_reports || []).find((r) => r.meeting_id === meeting?.id && r.person_id === selectedPerson) || { fields: {} };
   const fields = report.fields || {};
-  setTitle("美国代运营每周报表", canEditReport ? "美国代运营角色会前填写直营店每周报表；其他人可查看完成后的内容。" : "查看美国代运营完成后的第一部分报表内容。");
+  setTitle("美国代运营每周报表", canEditReport ? "只填写直播和非直播周汇总数据；总GMV、总订单量和平均客单价由系统自动叠加。" : "查看美国代运营完成后的直播和非直播周汇总数据。");
   qs("#content").innerHTML = `
     <form id="reportForm" class="grid">
       <div class="panel">
@@ -1303,6 +1314,7 @@ async function saveReport(event) {
       fields[item[0]] = form.get(item[0]) || "";
     }
   }
+  autoFillReportTotals(fields);
   try {
     const res = await api("/api/reports/save", {
       method: "POST",
@@ -1381,18 +1393,18 @@ function renderMeetingOps() {
   const actionDrafts = (app.data.action_drafts || []).filter((draft) => draft.part !== "part1");
   const actions = app.data.action_items || [];
   const subtitle = canUpload
-    ? "上传会议文字后保存纪要和行动项。"
+    ? "上传一次完整会议文字后，系统自动生成第一部分纪要草稿和第二部分行动项初稿。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
   setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
       <form id="transcriptForm" class="panel compact-upload-panel">
-        <h2>上传腾讯会议文字记录</h2>
-        <p class="compact-upload-hint">默认选最近一次已开会议。Part 1 生成纪要草稿；Part 2 生成行动项草稿；同一会议同一段再次上传会覆盖旧版。</p>
+        <h2>上传完整腾讯会议文字记录</h2>
+        <p class="compact-upload-hint">默认选最近一次已开会议。现在只需要上传一次完整文字；系统会自动生成第一部分纪要草稿和第二部分行动项初稿。同一会议再次上传会覆盖旧版。</p>
         <div class="form-grid two compact-upload-grid">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
-          <label>会议段落<select name="part"><option value="part1">Part 1：美国代运营每周报表</option><option value="part2">Part 2：内部经营复盘</option></select></label>
+          <input type="hidden" name="part" value="full" />
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
           <label class="field-wide">文字记录内容<textarea class="compact-upload-textarea" name="content" required></textarea></label>
@@ -1404,10 +1416,10 @@ function renderMeetingOps() {
       </form>` : ""}
       <div class="panel">
         <h2>每周会议文字记录归档</h2>
-        <p class="muted">这里只显示已经开过的会议；默认上传到最近一次已经开过的周会。</p>
+        <p class="muted">这里只显示已经开过的会议；每周只上传一次完整会议文字，系统内部拆分为纪要和行动项结果。</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>会议</th><th>美国时间</th><th>Part 1：美国代运营</th><th>Part 2：内部复盘</th><th>上传状态</th></tr></thead>
+            <thead><tr><th>会议</th><th>美国时间</th><th>第一部分纪要</th><th>第二部分行动项</th><th>处理状态</th></tr></thead>
             <tbody>${meetingHistoryRows()}</tbody>
           </table>
         </div>
@@ -1518,10 +1530,12 @@ async function saveTranscript(event) {
     });
     const draftItemCount = (res.action_drafts || []).reduce((sum, draft) => sum + (draft.items || []).length, 0);
     const savedParts = [];
-    if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("Part 1 已生成 AI 会议纪要草稿");
-    if (draftItemCount) savedParts.push(`Part 2 已生成 ${draftItemCount} 条行动项初稿`);
-    if ((res.replaced || []).length) savedParts.push("同会议同段旧版本已覆盖");
-    const targetRecord = (res.records || []).find((record) => record.part === body.part) || (res.records || [])[0];
+    if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("已生成第一部分 AI 会议纪要草稿");
+    if (draftItemCount) savedParts.push(`已生成第二部分 ${draftItemCount} 条行动项初稿`);
+    if (res.split_marker) savedParts.push(`自动断点：${res.split_marker}`);
+    if (res.split_warning) savedParts.push(res.split_warning);
+    if ((res.replaced || []).length) savedParts.push("本周旧版处理结果已覆盖");
+    const targetRecord = (res.records || []).find((record) => record.part === "part1") || (res.records || [])[0];
     renderMeetingOps();
     setTimeout(() => {
       showMessage("#transcriptMessage", savedParts.join("；") || "已上传保存", true);

@@ -96,9 +96,9 @@ def weekly_meeting_record(us_date: datetime.date, created_at: str, now_la: datet
     cn_date = us_date + timedelta(days=1)
     required = us_date >= FIRST_REQUIRED_REPORT_DATE
     notes = (
-        "美国代运营会前填写周报；会后上传两段腾讯会议文字记录。"
+        "美国代运营会前填写周报；会后上传一次完整腾讯会议文字记录。"
         if required
-        else "历史会议档案；腾讯会议文字记录待导出后上传 Part 1 / Part 2。"
+        else "历史会议档案；腾讯会议文字记录待导出后上传完整文字。"
     )
     return {
         "id": meeting_id_for_us_date(us_date),
@@ -274,6 +274,36 @@ def normalize_weekly_report_metrics(fields: dict[str, Any]) -> dict[str, float]:
         if parsed is not None:
             metrics[str(field)] = parsed
     return metrics
+
+
+def format_metric_for_field(value: float) -> str:
+    if abs(value - round(value)) < 0.0001:
+        return str(int(round(value)))
+    return str(round(value, 2)).rstrip("0").rstrip(".")
+
+
+def weekly_report_fields_and_metrics(fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float]]:
+    safe_fields = dict(fields) if isinstance(fields, dict) else {}
+    metrics = normalize_weekly_report_metrics(safe_fields)
+
+    if "live_gmv" in metrics or "non_live_gmv" in metrics:
+        total_gmv = metrics.get("live_gmv", 0.0) + metrics.get("non_live_gmv", 0.0)
+        metrics["total_gmv"] = round(total_gmv, 4)
+        safe_fields["total_gmv"] = format_metric_for_field(total_gmv)
+
+    if "live_orders" in metrics or "non_live_orders" in metrics:
+        total_orders = metrics.get("live_orders", 0.0) + metrics.get("non_live_orders", 0.0)
+        metrics["total_orders"] = round(total_orders, 4)
+        safe_fields["total_orders"] = format_metric_for_field(total_orders)
+
+    total_gmv = metrics.get("total_gmv")
+    total_orders = metrics.get("total_orders")
+    if total_gmv is not None and total_orders and total_orders > 0:
+        aov = total_gmv / total_orders
+        metrics["aov"] = round(aov, 4)
+        safe_fields["aov"] = format_metric_for_field(aov)
+
+    return safe_fields, metrics
 
 
 def extract_docx_text(blob: bytes) -> str:
@@ -598,24 +628,14 @@ def default_state() -> dict[str, Any]:
         "settings": {
             "meeting_links": [
                 {
-                    "id": "link_part1",
-                    "part": "part1",
-                    "title": "第一部分：美国代运营每周报表",
-                    "url": "",
-                    "meeting_id": "",
-                    "password": "",
-                    "host": "美国代运营/主持人",
-                    "notes": "用于美国代运营汇报直营店周报。",
-                },
-                {
-                    "id": "link_part2",
-                    "part": "part2",
-                    "title": "第二部分：内部经营复盘会",
+                    "id": "link_weekly",
+                    "part": "full",
+                    "title": "Kicksgo 每周腾讯会议",
                     "url": "",
                     "meeting_id": "",
                     "password": "",
                     "host": "主持人",
-                    "notes": "不需要凯尔参加，回顾上周纪要、内部决策和下周行动项。",
+                    "notes": "会员会议，一次开完整场周会；会后上传一次完整文字记录。",
                 },
             ],
             "meeting_rules": [
@@ -636,7 +656,7 @@ def default_state() -> dict[str, Any]:
                 "cn_date": "2026-06-15",
                 "cn_time": "11:00",
                 "kyle_report_required": False,
-                "notes": "系统第一条历史会议档案；腾讯会议文字记录待导出后上传 Part 1 / Part 2。",
+                "notes": "系统第一条历史会议档案；腾讯会议文字记录待导出后上传完整文字。",
                 "created_at": created_at,
             },
             {
@@ -650,7 +670,7 @@ def default_state() -> dict[str, Any]:
                 "cn_time": "11:00",
                 "kyle_report_required": True,
                 "report_due_note": "美国代运营需在会前3-6小时完成直营店周报。",
-                "notes": "从这次开始正式执行美国代运营会前周报、会后上传两段腾讯会议文字记录。",
+                "notes": "从这次开始正式执行美国代运营会前周报、会后上传一次完整腾讯会议文字记录。",
                 "created_at": created_at,
             },
         ],
@@ -958,14 +978,18 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("settings", {})
     state["settings"].setdefault("meeting_links", defaults["settings"]["meeting_links"])
     state["settings"].setdefault("meeting_rules", defaults["settings"]["meeting_rules"])
-    for link in state["settings"].get("meeting_links", []):
-        if link.get("id") == "link_part1":
-            if "凯尔" in str(link.get("title") or ""):
-                link["title"] = "第一部分：美国代运营每周报表"
-            if "凯尔" in str(link.get("host") or ""):
-                link["host"] = "美国代运营/主持人"
-            if "凯尔" in str(link.get("notes") or ""):
-                link["notes"] = "用于美国代运营汇报直营店周报。"
+    existing_links = clean_meeting_links(state["settings"].get("meeting_links") or [])
+    primary_link = next((link for link in existing_links if link.get("id") == "link_weekly"), None) or (existing_links[0] if existing_links else None)
+    if primary_link:
+        primary_link["id"] = "link_weekly"
+        primary_link["part"] = "full"
+        primary_link["title"] = primary_link.get("title") or "Kicksgo 每周腾讯会议"
+        if primary_link["title"].startswith("第一部分") or primary_link["title"].startswith("第二部分"):
+            primary_link["title"] = "Kicksgo 每周腾讯会议"
+        primary_link["notes"] = primary_link.get("notes") or "会员会议，一次开完整场周会；会后上传一次完整文字记录。"
+        state["settings"]["meeting_links"] = [primary_link]
+    else:
+        state["settings"]["meeting_links"] = defaults["settings"]["meeting_links"]
     state["settings"]["meeting_rules"] = [
         str(rule).replace("凯尔从", "美国代运营从").replace("凯尔", "美国代运营")
         for rule in state["settings"].get("meeting_rules", [])
@@ -1040,7 +1064,7 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
                     person["mention_aliases"].append(value)
     for report in state.setdefault("weekly_reports", []):
         fields = report.get("fields") if isinstance(report, dict) else {}
-        report["metrics"] = normalize_weekly_report_metrics(fields if isinstance(fields, dict) else {})
+        report["fields"], report["metrics"] = weekly_report_fields_and_metrics(fields if isinstance(fields, dict) else {})
     apply_known_person_aliases(state)
     return state
 
@@ -1722,17 +1746,17 @@ def clean_meeting_links(raw_links: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_links, list):
         raw_links = []
     cleaned: list[dict[str, Any]] = []
-    for index, raw in enumerate(raw_links[:6]):
+    for index, raw in enumerate(raw_links[:1]):
         if not isinstance(raw, dict):
             continue
-        part = str(raw.get("part") or ("part1" if index == 0 else f"part{index + 1}")).strip()
+        part = "full"
         title = str(raw.get("title") or "").strip()
         if not title:
-            title = "第一部分：美国代运营每周报表" if part == "part1" else "第二部分：内部经营复盘会"
-        link_id = str(raw.get("id") or f"link_{part or index + 1}").strip()
+            title = "Kicksgo 每周腾讯会议"
+        link_id = str(raw.get("id") or "link_weekly").strip()
         cleaned.append(
             {
-                "id": link_id[:80],
+                "id": (link_id or "link_weekly")[:80],
                 "part": part[:30],
                 "title": title[:120],
                 "url": str(raw.get("url") or "").strip()[:500],
@@ -2683,14 +2707,14 @@ class AppHandler(BaseHTTPRequestHandler):
         if not is_manager(user) and person_id != user.get("person_id"):
             self.send_json({"ok": False, "error": "No permission"}, 403)
             return
-        fields = payload.get("fields") or {}
+        fields, metrics = weekly_report_fields_and_metrics(payload.get("fields") or {})
         existing = next((r for r in state["weekly_reports"] if r.get("meeting_id") == meeting_id and r.get("person_id") == person_id), None)
         if not existing:
             existing = {"id": new_id("report"), "meeting_id": meeting_id, "person_id": person_id, "created_at": now_iso()}
             state["weekly_reports"].append(existing)
         existing.update({
             "fields": fields,
-            "metrics": normalize_weekly_report_metrics(fields),
+            "metrics": metrics,
             "status": payload.get("status") or "已保存",
             "updated_at": now_iso(),
             "updated_by": user.get("id"),
@@ -2775,14 +2799,19 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "文字记录内容太短"}, 400)
             return
         meeting_id = str(payload.get("meeting_id") or "")
-        selected_part = str(payload.get("part") or "part1")
+        selected_part = str(payload.get("part") or "full")
         part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
         pieces: list[tuple[str, str]] = []
+        split_warning = ""
         if split_marker:
             if len(part1_content.strip()) >= 10:
                 pieces.append(("part1", part1_content))
             if len(part2_content.strip()) >= 10:
                 pieces.append(("part2", part2_content))
+        elif selected_part == "full":
+            pieces.append(("part1", content))
+            pieces.append(("part2", content))
+            split_warning = "未识别到第一部分结束断点，已用完整文字同时生成第一部分纪要草稿和第二部分行动项初稿。"
         else:
             pieces.append((selected_part, content))
         records: list[dict[str, Any]] = []
@@ -2819,7 +2848,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "replaced": replaced})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "replaced": replaced})
+        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "split_warning": split_warning, "replaced": replaced})
 
     def handle_save_transcript_minutes(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
