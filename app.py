@@ -1550,8 +1550,12 @@ def speaker_names_for_minutes(analysis: dict[str, Any]) -> list[str]:
 
 def infer_minutes_topic(lines: list[str]) -> str:
     joined = "\n".join(lines[:160]).lower()
+    if ("仓储" in joined or "仓库" in joined or "物流" in joined or "sop" in joined) and ("代运营" in joined or "gmv" in joined or "tiktok" in joined):
+        return "TikTok代运营业务复盘与仓储物流优化周会"
     if ("自然流" in joined or "链接" in joined or "达人" in joined or "送样" in joined) and ("金牌" in joined or "银牌" in joined or "评分" in joined):
         return "TikTok店铺链接自然流、达人带货与金牌卖家目标冲刺复盘"
+    if "erp" in joined or "api" in joined or "库存同步" in joined or "sku" in joined:
+        return "TikTok店铺运营、系统对接与库存治理复盘"
     if "金牌" in joined or "silver" in joined or "银牌" in joined:
         return "TikTok店铺运营与金牌卖家目标冲刺复盘"
     if "达人" in joined or "送样" in joined:
@@ -1571,61 +1575,302 @@ def add_minutes_point(points: list[str], text: str) -> None:
         points.append(text)
 
 
+def looks_like_structured_meeting_minutes(content: str) -> bool:
+    text = str(content or "")
+    return (
+        "会议主题" in text
+        and "会议摘要" in text
+        and ("待办事项" in text or "待办" in text)
+        and len(text.strip()) >= 200
+    )
+
+
+def looks_like_meeting_minutes_content(content: str) -> bool:
+    text = str(content or "")
+    return "会议主题" in text and "会议摘要" in text and len(text.strip()) >= 120
+
+
+def normalize_structured_meeting_minutes(content: str) -> str:
+    text = str(content or "").strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"^\s*---\s*$", "---", text, flags=re.MULTILINE)
+    return text
+
+
+def is_minutes_heading(line: str) -> bool:
+    return bool(re.match(r"^\s*[一二三四五六七八九十\d]{1,3}[、\.．]\s*\S+", str(line or "").strip()))
+
+
+def minutes_part_prefix(prefix: list[str], part: str) -> list[str]:
+    title = "第一部分：美国代运营" if part == "part1" else "第二部分：内部经营复盘"
+    summary = (
+        "会议摘要：本部分围绕美国代运营经营数据、直播/非直播表现、目标拆解、达人与货品策略进行复盘。"
+        if part == "part1"
+        else "会议摘要：本部分围绕系统对接、库存与仓储物流、财务/合同、职责分工和会后行动项进行内部讨论。"
+    )
+    cleaned: list[str] = []
+    has_topic = False
+    has_summary = False
+    for raw in prefix:
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        if line.startswith("会议主题"):
+            cleaned.append(re.sub(r"会议主题[：:]\s*", "会议主题：", line) + f"（{title}）")
+            has_topic = True
+        elif line.startswith("会议摘要"):
+            cleaned.append(summary)
+            has_summary = True
+        elif line == "---":
+            continue
+        else:
+            cleaned.append(line)
+    if not has_topic:
+        cleaned.insert(0, f"会议主题：Kicksgo 周会（{title}）")
+    if not has_summary:
+        insert_at = 2 if len(cleaned) >= 2 and cleaned[1].startswith("发言人") else 1
+        cleaned.insert(insert_at, summary)
+    cleaned.append("---")
+    return cleaned
+
+
+def split_structured_minutes_by_business_part(content: str) -> tuple[str, str, str]:
+    text = normalize_structured_meeting_minutes(content)
+    if not text:
+        return "", "", ""
+    lines = text.splitlines()
+    heading_indexes = [index for index, line in enumerate(lines) if is_minutes_heading(line)]
+    if not heading_indexes:
+        part1, part2, marker = split_transcript_by_part_marker(text)
+        return part1, part2, marker
+
+    first_heading = heading_indexes[0]
+    prefix = lines[:first_heading]
+    sections: list[dict[str, Any]] = []
+    for offset, start in enumerate(heading_indexes):
+        end = heading_indexes[offset + 1] if offset + 1 < len(heading_indexes) else len(lines)
+        block = [line for line in lines[start:end] if str(line or "").strip()]
+        heading = block[0] if block else ""
+        sections.append({"heading": heading, "text": "\n".join(block), "block": block})
+
+    agency_keywords = [
+        "代运营", "gmv", "业绩", "目标", "直播", "非直播", "达人", "送样", "流量",
+        "内容", "店铺", "金牌", "银牌", "评分", "运营策略", "货品结构", "高客单",
+    ]
+    internal_keywords = [
+        "系统", "api", "erp", "sku", "库存", "仓储", "仓库", "物流", "sop", "打单",
+        "财务", "对账", "合同", "组织", "职责", "分工", "技术", "权限", "流程重构",
+    ]
+    part1_blocks: list[list[str]] = []
+    part2_blocks: list[list[str]] = []
+    internal_started = False
+    for section in sections:
+        heading = str(section.get("heading") or "")
+        section_text = str(section.get("text") or "")
+        normalized = normalize_name(section_text)
+        block = section.get("block") or []
+        is_todo = "待办" in heading
+        agency_score = sum(1 for keyword in agency_keywords if normalize_name(keyword) in normalized)
+        internal_score = sum(1 for keyword in internal_keywords if normalize_name(keyword) in normalized)
+        if is_todo:
+            part2_blocks.append(block)
+            continue
+        if not internal_started and (agency_score >= internal_score or not part1_blocks):
+            part1_blocks.append(block)
+            if internal_score > agency_score and part1_blocks[:-1]:
+                moved = part1_blocks.pop()
+                part2_blocks.append(moved)
+                internal_started = True
+        else:
+            internal_started = True
+            part2_blocks.append(block)
+
+    if not part2_blocks and len(part1_blocks) > 1:
+        part2_blocks = part1_blocks[1:]
+        part1_blocks = part1_blocks[:1]
+    marker = part2_blocks[0][0] if part2_blocks else ""
+
+    def join_part(part: str, blocks: list[list[str]]) -> str:
+        if not blocks:
+            return ""
+        merged = minutes_part_prefix(prefix, part)
+        for block in blocks:
+            merged.extend(block)
+            merged.append("")
+        return normalize_structured_meeting_minutes("\n".join(merged))
+
+    return join_part("part1", part1_blocks), join_part("part2", part2_blocks), marker
+
+
+def extract_todo_lines_from_minutes(content: str) -> list[str]:
+    lines = [str(line or "").strip() for line in str(content or "").splitlines()]
+    todo_start = -1
+    for index, line in enumerate(lines):
+        if "待办事项" in line or re.match(r"^\s*[一二三四五六七八九十\d]{1,3}[、\.．]\s*待办", line):
+            todo_start = index + 1
+            break
+    if todo_start < 0:
+        return []
+    todos: list[str] = []
+    for line in lines[todo_start:]:
+        if not line:
+            continue
+        if is_minutes_heading(line) and "待办" not in line and todos:
+            break
+        cleaned = re.sub(r"^\s*(?:[-*•]|(?:\d{1,2}|[一二三四五六七八九十])[\.\、．])\s*", "", line).strip()
+        if len(cleaned) < 4:
+            continue
+        if "@" in cleaned or looks_like_action_item(cleaned):
+            todos.append(cleaned)
+    return todos
+
+
+def clean_structured_todo_title(text: str) -> str:
+    title = re.sub(r"\s+", " ", str(text or "")).strip(" ：:，,。；;")
+    title = re.sub(r"^\s*(?:[-*•]|(?:\d{1,2}|[一二三四五六七八九十])[\.\、．])\s*", "", title)
+    title = re.sub(r"\s*@[^@，,。；;\n]+", "", title).strip(" ：:，,。；;")
+    if len(title) > 110:
+        cut = max(title.rfind("，", 0, 110), title.rfind("；", 0, 110), title.rfind("。", 0, 110), title.rfind(" ", 0, 110))
+        title = title[:cut if cut > 45 else 110].rstrip(" ，。；;") + "..."
+    return title
+
+
+def owner_from_todo_text(state: dict[str, Any], text: str) -> tuple[str, str, str]:
+    mentions = [match.group(1).strip() for match in re.finditer(r"@([^@，,。；;\n]+)", str(text or ""))]
+    mentions = [mention for mention in mentions if mention]
+    for mention in mentions:
+        person = match_person_from_text(state, mention)
+        if person:
+            owner_text = "、".join(mentions) if len(mentions) > 1 else person_display_name(person)
+            return str(person.get("id") or ""), owner_text, "待办事项明确@到负责人"
+    if mentions:
+        return "", "、".join(mentions), "待办事项明确@到负责人，但系统尚未匹配注册用户"
+    return infer_action_owner(state, text, "")
+
+
+def extract_structured_todo_items(state: dict[str, Any], content: str, part: str) -> list[dict[str, Any]]:
+    todo_lines = extract_todo_lines_from_minutes(content)
+    if not todo_lines:
+        return []
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for line in todo_lines:
+        title = clean_structured_todo_title(line)
+        if len(title) < 4:
+            continue
+        key = normalize_name(title[:100])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        owner_person_id, owner_text, confidence = owner_from_todo_text(state, line)
+        due_date = parse_due_date(line)
+        time_type, time_note, notes = build_action_notes("腾讯会议AI纪要-待办事项", confidence, line, due_date)
+        items.append(
+            {
+                "id": new_id("draftitem"),
+                "title": title,
+                "owner_person_id": owner_person_id,
+                "owner_text": owner_text,
+                "due_date": due_date,
+                "priority": infer_action_priority(line),
+                "status": "未开始",
+                "notes": notes,
+                "time_type": time_type,
+                "time_note": time_note,
+                "part": part,
+                "source_excerpt": line[:260],
+                "confidence": confidence,
+            }
+        )
+        if len(items) >= 20:
+            break
+    return items
+
+
 def business_minutes_sections(lines: list[str]) -> list[tuple[str, list[str]]]:
     joined = "\n".join(lines)
-    traffic: list[str] = []
-    supply: list[str] = []
-    live: list[str] = []
-    target: list[str] = []
+    goal: list[str] = []
+    operation: list[str] = []
+    system: list[str] = []
+    warehouse: list[str] = []
+    org: list[str] = []
+    communication: list[str] = []
 
-    if minutes_has(joined, ["自然流", "链接", "product link", "商品链接"]):
-        add_minutes_point(traffic, "自然流和商品链接已经开始出单，后续要把链接出单作为长期增长方向。")
-    if minutes_has(joined, ["达人", "送样", "creator", "affiliate", "短视频"]):
-        add_minutes_point(traffic, "自有短视频账号存在风控或下架风险，会议决定用达人送样测品测试视频存活和带货效果。")
-    if minutes_has(joined, ["flash", "1元", "一元", "起拍", "引流"]):
-        add_minutes_point(traffic, "链接、达人短视频和 Flash Deal 是长期方向，1 元起拍主要作为引流和拉新工具。")
+    if minutes_has(joined, ["gmv", "目标", "20万", "二十万", "30200", "订单", "日均", "直播时长"]):
+        add_minutes_point(goal, "会议复盘了上周 GMV、订单量、直播 GMV 与非直播 GMV，并要求后续按周度持续跟踪达成情况。")
+    if minutes_has(joined, ["7月", "七月", "20万", "二十万", "9200", "日均"]):
+        add_minutes_point(goal, "会议将 7 月 GMV 目标拆到日均目标，并要求直播时长和运营节奏围绕目标倒推。")
+    if minutes_has(joined, ["老店", "新店", "22号", "王总", "渠道"]):
+        add_minutes_point(goal, "不同店铺和合作渠道需要拆分目标，分别看老店、新店和合作渠道的 GMV 贡献。")
+    if minutes_has(joined, ["金牌", "银牌", "评分", "体验分", "信誉分"]):
+        add_minutes_point(goal, "店铺等级和评分仍是后续经营约束，需要把 GMV、评分、履约和客服指标一起跟踪。")
 
-    if minutes_has(joined, ["wms", "安全库存", "库存", "同步"]):
-        add_minutes_point(supply, "WMS 暂不能直接改 TikTok 店铺库存，先用安全库存机制控制超卖风险。")
-    if minutes_has(joined, ["tk仓", "tik tok仓", "仓库", "上架", "橱窗"]):
-        add_minutes_point(supply, "需要确认 TK 仓库存准确性，并把可售库存尽量全量上架到店铺橱窗。")
-    if minutes_has(joined, ["api", "erp", "对接", "申诉"]):
-        add_minutes_point(supply, "推进 TikTok 店铺、ERP 和库存系统 API 对接，同时把账号风控和申诉问题一起沟通。")
-    if minutes_has(joined, ["uin", "品牌", "做不了链接"]):
-        add_minutes_point(supply, "UIN 等无法做链接的品牌，需要主播提前了解产品背景，通过直播和拍卖方式销售。")
+    if minutes_has(joined, ["高客单", "10k", "20k", "优质鞋", "客单价", "利润"]):
+        add_minutes_point(operation, "会议提出引入高客单价鞋款，通过货品结构升级提高客单价和利润空间。")
+    if minutes_has(joined, ["滞销", "ue", "清仓", "拍卖", "分销", "引流"]):
+        add_minutes_point(operation, "滞销品不再按常规销售节奏推进，优先转为拍卖引流品或通过外部合作直播间分销。")
+    if minutes_has(joined, ["达人", "送样", "联盟", "视频", "短视频", "寄样"]):
+        add_minutes_point(operation, "达人联盟继续用免费寄样和短视频测试带货效果，需要记录样品、视频、订单和 GMV 反馈。")
+    if minutes_has(joined, ["flash", "闪购", "1元", "一元", "起拍"]):
+        add_minutes_point(operation, "闪购或低价起拍主要用于引流测试，后续要沉淀为可复用的直播转化模式。")
 
-    if minutes_has(joined, ["直播计划", "话术", "主播", "直播前", "开播"]):
-        add_minutes_point(live, "直播前必须有计划、话术、产品背景和备品流程，不能无计划开播。")
-    if minutes_has(joined, ["诺诺", "kevin", "线下", "开会", "会议"]):
-        add_minutes_point(live, "诺诺、Kevin 和主播团队需要线下开会，固定直播计划、新品测试和反馈流程。")
-    if minutes_has(joined, ["反馈", "采购", "补货", "新品", "海运", "需求"]):
-        add_minutes_point(live, "建立直播间客户需求到采购补货的反馈闭环，避免海运周期导致断货。")
+    if minutes_has(joined, ["sku", "au", "拍卖链接", "库存锁定"]):
+        add_minutes_point(system, "拍卖链接 SKU 需要统一命名规则，例如以 AU 前缀区分拍卖库存，避免系统识别和库存锁定错误。")
+    if minutes_has(joined, ["us尺码", "us 尺码", "eur", "cn尺码", "英文翻译"]):
+        add_minutes_point(system, "ERP 和商品界面需优先显示美国市场可识别的 US 尺码，并补齐必要英文信息。")
+    if minutes_has(joined, ["唯一码", "条码", "贴码", "袜子", "最小销售单位"]):
+        add_minutes_point(system, "无唯一码或条码商品需要在深圳仓入库时按最小销售单位贴码，保证海外仓可扫描追踪。")
+    if minutes_has(joined, ["api", "erp", "聚水潭", "接口", "自动抓取", "打单", "订单同步"]):
+        add_minutes_point(system, "系统侧需要继续推进 API、聚水潭或自有接口方案，解决订单抓取、打单同步和库存同步问题。")
+    if minutes_has(joined, ["财务", "流水", "共享表", "对账", "结算"]):
+        add_minutes_point(system, "财务流水和分成结算需要通过共享表或系统字段沉淀，保证每笔资金流向可追溯。")
 
-    if minutes_has(joined, ["评分", "体验分", "物流", "客服", "售后"]):
-        add_minutes_point(target, "当前店铺评分偏低，尤其物流、客服和售后处理需要优先提升。")
-    if minutes_has(joined, ["金牌", "银牌", "20万", "200000", "六万", "6万"]):
-        add_minutes_point(target, "店铺当前仍在银牌阶段，会议明确要按金牌卖家门槛倒推 GMV 达成计划。")
-    if minutes_has(joined, ["日均", "每周", "差额", "目标", "复盘"]):
-        add_minutes_point(target, "金牌卖家目标要拆到日度和周度，每周复盘差额，未达标部分下周补齐。")
+    if minutes_has(joined, ["sop", "拍一单配一单", "贴标", "打包", "日清日结", "直播发货"]):
+        add_minutes_point(warehouse, "直播发货流程从播后统配改为拍一单配一单，现场完成配货、贴标、打包并尽量日清日结。")
+    if minutes_has(joined, ["移动货架", "扫码枪", "调拨", "售卖仓", "批发仓"]):
+        add_minutes_point(warehouse, "仓库需要区分 TK 批发仓和售卖仓，直播现场通过移动货架和扫码调拨减少人工审批。")
+    if minutes_has(joined, ["t+1", "t+2", "未发货", "异常", "缺货", "尺码不符"]):
+        add_minutes_point(warehouse, "仓库需在当天结束前核对 T+1/T+2 未发货订单，并明确标注缺货、尺码不符等异常原因。")
+    if minutes_has(joined, ["预包装", "销售单位", "国内发货", "海外仓"]):
+        add_minutes_point(warehouse, "国内发货时应按销售单位预包装并贴唯一条码，海外仓尽量只做扫描发货动作。")
+
+    if minutes_has(joined, ["ronald", "诺诺", "总负责人", "sop主导", "全权制定"]):
+        add_minutes_point(org, "会议明确 TK 仓库 SOP 需要有总负责人牵头，深圳仓、美国仓和直播团队按流程配合。")
+    if minutes_has(joined, ["汪志", "袁继", "技术支持", "战略级", "系统报错"]):
+        add_minutes_point(org, "技术支持分层处理：日常打单、报错等问题走日常技术支持，战略级系统框架问题再升级。")
+    if minutes_has(joined, ["ken", "主播", "招聘", "面试", "培训"]):
+        add_minutes_point(org, "主播招聘、现场培训和直播团队协作需要明确负责人和交接标准，避免只靠临时沟通推动。")
+
+    if minutes_has(joined, ["有事立刻解决", "不过夜", "电话", "语音", "周会", "积压"]):
+        add_minutes_point(communication, "会议强调问题不能积压到周会，文字未回复时要及时电话或语音沟通，避免业务问题过夜。")
+    if minutes_has(joined, ["会前备注", "行动项", "系统", "例会", "提前填写"]):
+        add_minutes_point(communication, "后续会议按系统行动项和会前备注推进，会议重点用于确认状态、责任人和下一步。")
 
     sections = [
-        ("流量与链接运营", traffic),
-        ("库存、上架与 API 同步", supply),
-        ("直播流程与货品反馈", live),
-        ("店铺评分与金牌卖家目标", target),
+        ("核心业务目标与业绩复盘", goal),
+        ("运营策略与货品结构优化", operation),
+        ("系统对接与基础数据治理", system),
+        ("仓储物流与发货流程重构", warehouse),
+        ("组织架构与职责对齐", org),
+        ("沟通机制与例会标准化", communication),
     ]
-    return sections
+    return [(name, points) for name, points in sections if points]
 
 
 def minutes_summary_sentence(sections: list[tuple[str, list[str]]]) -> str:
     focus = [name for name, items in sections if items]
     if not focus:
         return "会议围绕美国代运营店铺经营情况进行复盘，待管理员补充核心判断和下周动作。"
-    if {"流量与链接运营", "库存、上架与 API 同步", "直播流程与货品反馈"}.issubset(set(focus)):
-        return "会议重点讨论 TikTok 店铺从直播拍卖向商品链接、自然流、达人短视频和 Flash Deal 转型，同时明确库存同步、直播流程、评分提升和金牌卖家目标拆解等后续动作。"
+    focus_set = set(focus)
+    if {"核心业务目标与业绩复盘", "仓储物流与发货流程重构"}.issubset(focus_set):
+        return "会议重点复盘了 GMV 达成、月度目标和代运营增长策略，并围绕系统对接、库存同步、仓储物流 SOP 和人员职责形成后续整改方向。"
+    if {"核心业务目标与业绩复盘", "运营策略与货品结构优化"}.issubset(focus_set):
+        return "会议围绕 TikTok 代运营经营数据、目标拆解、直播与非直播增长、达人联盟和货品结构优化进行复盘，并明确下周需要继续跟进的业务动作。"
+    if {"系统对接与基础数据治理", "仓储物流与发货流程重构"}.issubset(focus_set):
+        return "会议重点讨论系统对接、SKU 与尺码规范、库存同步、仓库发货流程和异常订单处理，要求后续按负责人落实到具体行动项。"
     if len(focus) == 1:
         return f"会议重点复盘了{focus[0]}，并要求会后继续补充负责人、截止时间和结果口径。"
-    return f"会议重点复盘了{'、'.join(focus[:3])}，并围绕关键卡点形成后续跟进方向。"
+    return f"会议重点复盘了{'、'.join(focus[:4])}，并围绕关键卡点形成后续执行方向。"
 
 
 def pick_minutes_todos(lines: list[str], limit: int, used: set[str]) -> list[str]:
@@ -1655,24 +1900,38 @@ def pick_minutes_todos(lines: list[str], limit: int, used: set[str]) -> list[str
 def business_minutes_todos(lines: list[str]) -> list[str]:
     joined = "\n".join(lines)
     todos: list[str] = []
-    if minutes_has(joined, ["达人", "送样", "sku"]):
-        add_minutes_point(todos, "筛选 3 个 SKU 并联系达人送样，测试短视频存活和带货效果。@Brian")
-    if minutes_has(joined, ["风控", "api", "申诉", "周二", "总部"]):
-        add_minutes_point(todos, "沟通 TikTok 短视频账号风控、API 对接和申诉问题。@蔡平")
-    if minutes_has(joined, ["安全库存", "库存", "tk仓", "仓库"]):
-        add_minutes_point(todos, "确认 TK 仓库存准确性，并设置安全库存。@Brian")
-    if minutes_has(joined, ["上架", "橱窗", "uin"]):
-        add_minutes_point(todos, "将 TK 仓除 UIN 外的可售库存尽量全量上架到 TikTok 店铺橱窗。@袁继")
-    if minutes_has(joined, ["直播计划", "新品", "反馈", "诺诺", "kevin", "主播"]):
-        add_minutes_point(todos, "组织诺诺、Kevin 和主播团队线下会，制定直播计划、新品测试和反馈机制。@蔡平 / 诺诺")
-    if minutes_has(joined, ["评分", "物流", "客服", "售后", "体验分"]):
-        add_minutes_point(todos, "梳理店铺评分低的原因，重点改进物流、客服和售后处理。@美国运营团队")
-    if minutes_has(joined, ["金牌", "银牌", "gmv", "目标"]):
-        add_minutes_point(todos, "按金牌卖家目标倒推周度 GMV 计划，每周复盘差额。@蔡平 / njj")
-    return todos[:8]
+    if minutes_has(joined, ["sku", "au", "拍卖链接"]):
+        add_minutes_point(todos, "完成所有拍卖链接 SKU 前缀修改，统一改为 AU，避免库存识别错误。@国内技术")
+    if minutes_has(joined, ["闪购", "flash"]):
+        add_minutes_point(todos, "安排 1-2 场闪购模式直播测试，记录 GMV、订单和转化效果。@美国代运营")
+    if minutes_has(joined, ["达人", "送样", "联盟"]):
+        add_minutes_point(todos, "梳理达人选品清单，继续跟进样品寄送、视频发布和订单反馈。@Ken")
+    if minutes_has(joined, ["65000", "尾款", "分成"]):
+        add_minutes_point(todos, "跟进 65000 美金订单尾款支付和分成细节确认。@Ken")
+    if minutes_has(joined, ["主播", "招聘", "面试"]):
+        add_minutes_point(todos, "继续招聘并面试 2-3 名主播，补齐直播排班能力。@Ken")
+    if minutes_has(joined, ["滞销", "分销", "清仓"]):
+        add_minutes_point(todos, "整理滞销品列表，提出拍卖、分销或清仓方案。@Ken / Ronald Chen")
+    if minutes_has(joined, ["sop", "拍一单配一单", "仓库"]):
+        add_minutes_point(todos, "制定 TK 项目仓库 SOP，明确直播现场配货、贴标、打包和异常订单处理流程。@Ronald Chen")
+    if minutes_has(joined, ["19号", "未发货", "异常备注"]):
+        add_minutes_point(todos, "完成 19 号及之前订单发货或异常备注，确保未发货订单原因清楚。@Ronald Chen")
+    if minutes_has(joined, ["自动建链接", "打单", "订单同步", "api", "erp"]):
+        add_minutes_point(todos, "研究并解决自动建链接、订单同步和打单对接问题。@袁继")
+    if minutes_has(joined, ["us尺码", "英文翻译"]):
+        add_minutes_point(todos, "增加 ERP 系统 US 尺码显示和英文翻译功能。@袁继")
+    if minutes_has(joined, ["合同", "丢失", "重签"]):
+        add_minutes_point(todos, "解决合同丢失问题，重新签署并寄出。@人生如戏")
+    if minutes_has(joined, ["王总", "备货", "转运"]):
+        add_minutes_point(todos, "完成王总渠道货物备货与转运。@默认昵称")
+    return todos[:15]
 
 
 def generate_part1_minutes(content: str, state: dict[str, Any]) -> str:
+    source_text = str(content or "").strip()
+    if looks_like_meeting_minutes_content(source_text):
+        part1_minutes, _part2_minutes, _marker = split_structured_minutes_by_business_part(source_text)
+        return normalize_structured_meeting_minutes(part1_minutes or source_text)
     raw_lines = [clean_minutes_line(line) for line in str(content or "").splitlines()]
     lines = [line for line in raw_lines if len(line) >= 8 and not looks_like_binary_text(line)]
     analysis = extract_speakers(content, state)
@@ -2110,6 +2369,9 @@ def build_action_notes(speaker: str, confidence: str, body: str, due_date: str) 
 
 
 def extract_action_draft_items(state: dict[str, Any], content: str, part: str) -> list[dict[str, Any]]:
+    structured_items = extract_structured_todo_items(state, content, part)
+    if structured_items:
+        return structured_items
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw_line in str(content or "").splitlines():
@@ -2146,7 +2408,7 @@ def extract_action_draft_items(state: dict[str, Any], content: str, part: str) -
                 "confidence": confidence,
             }
         )
-        if len(items) >= 12:
+        if len(items) >= 20:
             break
     return items
 
@@ -2173,7 +2435,7 @@ def create_action_draft(
         "chat": [
             {
                 "role": "system",
-                "message": f"系统已根据会议文字生成 {len(items)} 条行动项初稿。请管理员或主持人确认负责人、截止日期和优先级后再生成正式行动项。",
+                "message": f"系统已根据腾讯会议AI纪要/会议文字生成 {len(items)} 条行动项初稿。请管理员或主持人确认负责人、截止日期和优先级后再生成正式行动项。",
                 "created_at": now_iso(),
             }
         ],
@@ -2790,16 +3052,25 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "只有管理员、会议主持人或国内行政可以上传会议文字记录"}, 403)
             return
         filename = str(payload.get("filename") or "")
+        minutes_content = str(payload.get("minutes_content") or "").strip()
         try:
             content = uploaded_transcript_content(payload, filename)
         except ValueError as exc:
             self.send_json({"ok": False, "error": str(exc)}, 400)
             return
-        if len(content.strip()) < 10:
-            self.send_json({"ok": False, "error": "文字记录内容太短"}, 400)
+        content = str(content or "").strip()
+        if len(content) < 10 and len(minutes_content) < 10:
+            self.send_json({"ok": False, "error": "请至少粘贴完整会议原文或腾讯会议AI纪要"}, 400)
             return
+        if len(content) < 10:
+            content = minutes_content
         meeting_id = str(payload.get("meeting_id") or "")
         selected_part = str(payload.get("part") or "full")
+        minutes_part1 = ""
+        minutes_part2 = ""
+        minutes_split_marker = ""
+        if minutes_content:
+            minutes_part1, minutes_part2, minutes_split_marker = split_structured_minutes_by_business_part(minutes_content)
         part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
         pieces: list[tuple[str, str]] = []
         split_warning = ""
@@ -2811,7 +3082,7 @@ class AppHandler(BaseHTTPRequestHandler):
         elif selected_part == "full":
             pieces.append(("part1", content))
             pieces.append(("part2", content))
-            split_warning = "未识别到第一部分结束断点，已用完整文字同时生成第一部分纪要草稿和第二部分行动项初稿。"
+            split_warning = "未识别到第一部分结束断点，已用完整文字留档；如已粘贴腾讯会议AI纪要，系统会按纪要大标题拆分第一部分纪要和第二部分行动项。"
         else:
             pieces.append((selected_part, content))
         records: list[dict[str, Any]] = []
@@ -2832,8 +3103,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 content=part_content,
                 split_marker=split_marker,
             )
+            if minutes_content:
+                record["minutes_source"] = "tencent_ai_minutes"
+                record["minutes_source_char_count"] = len(minutes_content)
+                if minutes_split_marker:
+                    record["minutes_split_marker"] = minutes_split_marker
             if part == "part1":
-                record["minutes_draft"] = generate_part1_minutes(part_content, state)
+                record["minutes_draft"] = normalize_structured_meeting_minutes(minutes_part1) if minutes_part1 else generate_part1_minutes(part_content, state)
                 record["minutes_final"] = ""
                 record["minutes_status"] = "draft"
                 record["minutes_updated_at"] = now_iso()
@@ -2842,13 +3118,15 @@ class AppHandler(BaseHTTPRequestHandler):
             state["transcript_uploads"].append(record)
             records.append(record)
             if part == "part2":
-                drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, part_content, filename))
+                action_source = minutes_part2 or minutes_content or part_content
+                draft_filename = f"{filename or '腾讯会议'} / AI纪要" if minutes_content else filename
+                drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, action_source, draft_filename))
         if not records:
             self.send_json({"ok": False, "error": "自动切分后没有可保存的文字内容"}, 400)
             return
-        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "replaced": replaced})
+        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "minutes_split_marker": minutes_split_marker, "used_ai_minutes": bool(minutes_content), "replaced": replaced})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "split_warning": split_warning, "replaced": replaced})
+        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "minutes_split_marker": minutes_split_marker, "split_warning": split_warning, "used_ai_minutes": bool(minutes_content), "replaced": replaced})
 
     def handle_save_transcript_minutes(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):

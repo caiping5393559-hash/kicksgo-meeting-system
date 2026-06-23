@@ -1393,21 +1393,22 @@ function renderMeetingOps() {
   const actionDrafts = (app.data.action_drafts || []).filter((draft) => draft.part !== "part1");
   const actions = app.data.action_items || [];
   const subtitle = canUpload
-    ? "上传一次完整会议文字后，系统自动生成第一部分纪要草稿和第二部分行动项初稿。"
+    ? "上传完整会议原文，可同时粘贴腾讯会议AI纪要；系统按纪要生成第一部分纪要和第二部分行动项初稿。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
   setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
       <form id="transcriptForm" class="panel compact-upload-panel">
-        <h2>上传完整腾讯会议文字记录</h2>
-        <p class="compact-upload-hint">默认选最近一次已开会议。现在只需要上传一次完整文字；系统会自动生成第一部分纪要草稿和第二部分行动项初稿。同一会议再次上传会覆盖旧版。</p>
+        <h2>上传腾讯会议资料</h2>
+        <p class="compact-upload-hint">默认是最近一次已开会议。同一会议再次上传会覆盖旧版。建议同时粘贴“完整原文”和“腾讯会议AI纪要”：原文留档，AI纪要用于拆分第一部分纪要和生成第二部分行动项。</p>
         <div class="form-grid two compact-upload-grid">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
           <input type="hidden" name="part" value="full" />
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
-          <label class="field-wide">文字记录内容<textarea class="compact-upload-textarea" name="content" required></textarea></label>
+          <label class="field-wide">完整会议原文<textarea class="compact-upload-textarea raw-transcript-input" name="content" placeholder="复制腾讯会议完整文字记录，或上传文件后自动填入。"></textarea></label>
+          <label class="field-wide">腾讯会议AI纪要<textarea class="compact-upload-textarea ai-minutes-input" name="minutes_content" placeholder="把腾讯会议自动整理的会议纪要复制到这里。系统会优先根据这份纪要生成第一部分代运营纪要和第二部分行动项草稿。"></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">上传保存</button>
@@ -1532,7 +1533,9 @@ async function saveTranscript(event) {
     const savedParts = [];
     if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("已生成第一部分 AI 会议纪要草稿");
     if (draftItemCount) savedParts.push(`已生成第二部分 ${draftItemCount} 条行动项初稿`);
+    if (res.used_ai_minutes) savedParts.push("已优先使用腾讯会议AI纪要");
     if (res.split_marker) savedParts.push(`自动断点：${res.split_marker}`);
+    if (res.minutes_split_marker) savedParts.push(`纪要拆分点：${res.minutes_split_marker}`);
     if (res.split_warning) savedParts.push(res.split_warning);
     if ((res.replaced || []).length) savedParts.push("本周旧版处理结果已覆盖");
     const targetRecord = (res.records || []).find((record) => record.part === "part1") || (res.records || [])[0];

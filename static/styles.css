@@ -699,6 +699,15 @@ p {
   max-height: 150px;
 }
 
+.raw-transcript-input {
+  min-height: 74px;
+}
+
+.ai-minutes-input {
+  min-height: 130px;
+  max-height: 260px;
+}
+
 .inline-action-tip {
   display: inline-block;
   margin-left: 8px;
