@@ -1258,6 +1258,29 @@ tbody tr:hover td {
   table-layout: fixed;
 }
 
+.history-actions-panel {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.history-actions-panel summary {
+  cursor: pointer;
+  color: var(--navy);
+  font-weight: 800;
+}
+
+.action-history-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.action-history-filters label {
+  font-size: 12px;
+}
+
 .published-action-title {
   min-height: 72px;
   line-height: 1.55;

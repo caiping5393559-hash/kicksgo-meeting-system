@@ -1394,6 +1394,8 @@ function renderMeetingOps() {
   const actionDrafts = (app.data.action_drafts || [])
     .filter((draft) => draft.part !== "part1" && (!actionMeeting?.id || draft.meeting_id === actionMeeting.id));
   const actions = app.data.action_items || [];
+  const currentPublishedActions = actions.filter((action) => !actionMeeting?.id || action.meeting_id === actionMeeting.id);
+  const historicalPublishedActions = actions.filter((action) => actionMeeting?.id && action.meeting_id !== actionMeeting.id);
   const subtitle = canUpload
     ? "上传完整会议原文，可同时粘贴腾讯会议AI纪要；系统只按时间断点拆分第一部分和第二部分。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
@@ -1459,8 +1461,8 @@ function renderMeetingOps() {
         </div>
         ${renderActionDrafts(actionDrafts, actionMeeting)}
         <div class="panel">
-          <h2>已发布行动项</h2>
-          <p class="hint">正式行动项的内容从上方对应草稿修改，再点“保存正式发布”同步更新到负责人。这里保留删除入口，避免两套地方同时改造成混乱。</p>
+          <h2>本周已发布行动项</h2>
+          <p class="hint">这里只显示 ${escapeHtml(meetingName(actionMeeting?.id) || "最近一次已开会议")} 的正式行动项。更早会议的行动项已收进下面“历史行动项”。</p>
           <div class="table-wrap published-action-table">
             <table>
               <colgroup>
@@ -1475,10 +1477,34 @@ function renderMeetingOps() {
               </colgroup>
               <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th><th>操作</th></tr></thead>
               <tbody>
-                ${actionRowsHtml(actions, true) || '<tr><td colspan="8" class="muted">暂无行动项</td></tr>'}
+                ${actionRowsHtml(currentPublishedActions, true) || '<tr><td colspan="8" class="muted">本周暂无已发布行动项</td></tr>'}
               </tbody>
             </table>
           </div>
+          <details class="history-actions-panel">
+            <summary>历史行动项（${historicalPublishedActions.length}）</summary>
+            <p class="hint">历史行动项默认收起，需要查旧任务时再展开筛选。</p>
+            ${actionHistoryFiltersHtml(historicalPublishedActions)}
+            <div class="table-wrap published-action-table">
+              <table>
+                <colgroup>
+                  <col class="published-col-meeting" />
+                  <col class="published-col-title" />
+                  <col class="published-col-owner" />
+                  <col class="published-col-priority" />
+                  <col class="published-col-status" />
+                  <col class="published-col-due" />
+                  <col class="published-col-notes" />
+                  <col class="published-col-actions" />
+                </colgroup>
+                <thead><tr><th>会议</th><th>事项</th><th>负责人</th><th>优先级</th><th>状态</th><th>截止</th><th>说明/时间判断</th><th>操作</th></tr></thead>
+                <tbody id="historyActionRows">
+                  ${actionRowsHtml(historicalPublishedActions, true, "history-action-row") || '<tr><td colspan="8" class="muted">暂无历史行动项</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+            <p id="historyActionCount" class="muted small-note"></p>
+          </details>
         </div>
       ` : ""}
     </div>
@@ -1711,8 +1737,8 @@ function renderActionDrafts(drafts, meeting = lastOccurredMeeting() || currentMe
   `).join("");
 }
 
-function actionRowsHtml(items, canEdit = false) {
-  return items.map((a) => canEdit ? publishedActionRowHtml(a) : `
+function actionRowsHtml(items, canEdit = false, rowClass = "") {
+  return items.map((a) => canEdit ? publishedActionRowHtml(a, rowClass) : `
     <tr>
       <td>${escapeHtml(meetingName(a.meeting_id))}</td>
       <td>${escapeHtml(a.title)}</td>
@@ -1725,12 +1751,51 @@ function actionRowsHtml(items, canEdit = false) {
   `).join("");
 }
 
-function publishedActionRowHtml(a) {
+function actionSearchText(a) {
+  return [
+    meetingName(a.meeting_id),
+    a.title,
+    personName(a.owner_person_id),
+    a.owner_text,
+    a.priority,
+    a.status,
+    a.due_date,
+    actionNotesText(a),
+  ].join(" ").toLowerCase();
+}
+
+function uniqueActionMeetings(items) {
+  const ids = [...new Set((items || []).map((item) => item.meeting_id).filter(Boolean))];
+  return ids.sort((a, b) => String(meetingName(b)).localeCompare(String(meetingName(a))));
+}
+
+function uniqueActionOwners(items) {
+  const ids = [...new Set((items || []).map((item) => item.owner_person_id).filter(Boolean))];
+  return ids.sort((a, b) => String(personName(a)).localeCompare(String(personName(b))));
+}
+
+function uniqueActionStatuses(items) {
+  return [...new Set((items || []).map((item) => item.status).filter(Boolean))].sort();
+}
+
+function actionHistoryFiltersHtml(items) {
+  if (!items.length) return "";
+  return `
+    <div class="action-history-filters">
+      <label>搜索<input id="historyActionSearch" placeholder="搜索事项、负责人、备注" /></label>
+      <label>会议<select id="historyActionMeeting"><option value="">全部会议</option>${uniqueActionMeetings(items).map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(meetingName(id))}</option>`).join("")}</select></label>
+      <label>负责人<select id="historyActionOwner"><option value="">全部负责人</option>${uniqueActionOwners(items).map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(personName(id) || id)}</option>`).join("")}</select></label>
+      <label>状态<select id="historyActionStatus"><option value="">全部状态</option>${uniqueActionStatuses(items).map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("")}</select></label>
+    </div>
+  `;
+}
+
+function publishedActionRowHtml(a, rowClass = "") {
   const draftButton = a.source_draft_id
     ? `<button type="button" class="plain-btn jump-source-draft" data-draft-id="${escapeHtml(a.source_draft_id)}">改草稿</button>`
     : "";
   return `
-    <tr class="published-action-row" data-id="${escapeHtml(a.id || "")}">
+    <tr class="published-action-row ${escapeHtml(rowClass)}" data-id="${escapeHtml(a.id || "")}" data-meeting-id="${escapeHtml(a.meeting_id || "")}" data-owner-id="${escapeHtml(a.owner_person_id || "")}" data-status="${escapeHtml(a.status || "")}" data-search="${escapeHtml(actionSearchText(a))}">
       <td>${escapeHtml(meetingName(a.meeting_id))}</td>
       <td>${escapeHtml(a.title || "")}</td>
       <td>${escapeHtml(personName(a.owner_person_id) || a.owner_text || "待定")}</td>
@@ -1748,6 +1813,36 @@ function publishedActionRowHtml(a) {
   `;
 }
 
+function wireHistoryActionFilters() {
+  const panel = document.querySelector(".history-actions-panel");
+  if (!panel) return;
+  const rows = Array.from(panel.querySelectorAll(".history-action-row"));
+  const search = panel.querySelector("#historyActionSearch");
+  const meeting = panel.querySelector("#historyActionMeeting");
+  const owner = panel.querySelector("#historyActionOwner");
+  const status = panel.querySelector("#historyActionStatus");
+  const count = panel.querySelector("#historyActionCount");
+  const apply = () => {
+    const q = String(search?.value || "").trim().toLowerCase();
+    const meetingId = meeting?.value || "";
+    const ownerId = owner?.value || "";
+    const statusValue = status?.value || "";
+    let visible = 0;
+    rows.forEach((row) => {
+      const ok = (!q || String(row.dataset.search || "").includes(q))
+        && (!meetingId || row.dataset.meetingId === meetingId)
+        && (!ownerId || row.dataset.ownerId === ownerId)
+        && (!statusValue || row.dataset.status === statusValue);
+      row.classList.toggle("hidden", !ok);
+      if (ok) visible += 1;
+    });
+    if (count) count.textContent = rows.length ? `当前显示 ${visible} / ${rows.length} 条历史行动项` : "";
+  };
+  [search, meeting, owner, status].forEach((el) => el?.addEventListener("input", apply));
+  [meeting, owner, status].forEach((el) => el?.addEventListener("change", apply));
+  apply();
+}
+
 function renderActionManage() {
   renderMeetingOps();
 }
@@ -1762,6 +1857,7 @@ function wireActionManagement() {
   document.querySelectorAll(".save-published-action").forEach((btn) => btn.addEventListener("click", () => savePublishedAction(btn)));
   document.querySelectorAll(".delete-action").forEach((btn) => btn.addEventListener("click", () => deleteAction(btn.dataset.id)));
   document.querySelectorAll(".jump-source-draft").forEach((btn) => btn.addEventListener("click", () => jumpToSourceDraft(btn.dataset.draftId)));
+  wireHistoryActionFilters();
 }
 
 function renderActionManageLegacy() {
