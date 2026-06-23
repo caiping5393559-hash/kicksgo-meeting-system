@@ -1601,6 +1601,18 @@ def is_minutes_heading(line: str) -> bool:
     return bool(re.match(r"^\s*[一二三四五六七八九十\d]{1,3}[、\.．]\s*\S+", str(line or "").strip()))
 
 
+def is_part2_start_marker(line: str) -> bool:
+    compact = normalize_name(line)
+    if not compact:
+        return False
+    return (
+        ("第二部分" in compact and ("内部" in compact or "复盘" in compact or "讨论" in compact or "经营" in compact))
+        or ("内部经营复盘" in compact and ("开始" in compact or "流程" in compact or "会议" in compact))
+        or ("内部讨论" in compact and ("开始" in compact or "会议" in compact))
+        or ("进入内部" in compact and ("复盘" in compact or "讨论" in compact))
+    )
+
+
 def minutes_part_prefix(prefix: list[str], part: str) -> list[str]:
     title = "第一部分：美国代运营" if part == "part1" else "第二部分：内部经营复盘"
     summary = (
@@ -1618,6 +1630,8 @@ def minutes_part_prefix(prefix: list[str], part: str) -> list[str]:
         if line.startswith("会议主题"):
             cleaned.append(re.sub(r"会议主题[：:]\s*", "会议主题：", line) + f"（{title}）")
             has_topic = True
+        elif part == "part2" and line.startswith("发言人"):
+            cleaned.append("参会范围：第二部分为内部经营复盘，已排除美国代运营段落。")
         elif line.startswith("会议摘要"):
             cleaned.append(summary)
             has_summary = True
@@ -1638,68 +1652,37 @@ def split_structured_minutes_by_business_part(content: str) -> tuple[str, str, s
     text = normalize_structured_meeting_minutes(content)
     if not text:
         return "", "", ""
+    marker_part1, marker_part2, marker = split_transcript_by_part_marker(text)
+    if marker and marker_part2.strip():
+        return normalize_structured_meeting_minutes(marker_part1), normalize_structured_meeting_minutes(marker_part2), marker
+
     lines = text.splitlines()
     heading_indexes = [index for index, line in enumerate(lines) if is_minutes_heading(line)]
-    if not heading_indexes:
-        part1, part2, marker = split_transcript_by_part_marker(text)
-        return part1, part2, marker
+    first_content_index = heading_indexes[0] if heading_indexes else 0
+    prefix = lines[:first_content_index]
+    split_index = -1
+    split_marker = ""
+    for index in range(first_content_index, len(lines)):
+        if is_part2_start_marker(lines[index]):
+            split_index = index
+            split_marker = lines[index].strip()
+            break
+    if split_index < 0:
+        return "", "", ""
 
-    first_heading = heading_indexes[0]
-    prefix = lines[:first_heading]
-    sections: list[dict[str, Any]] = []
-    for offset, start in enumerate(heading_indexes):
-        end = heading_indexes[offset + 1] if offset + 1 < len(heading_indexes) else len(lines)
-        block = [line for line in lines[start:end] if str(line or "").strip()]
-        heading = block[0] if block else ""
-        sections.append({"heading": heading, "text": "\n".join(block), "block": block})
-
-    agency_keywords = [
-        "代运营", "gmv", "业绩", "目标", "直播", "非直播", "达人", "送样", "流量",
-        "内容", "店铺", "金牌", "银牌", "评分", "运营策略", "货品结构", "高客单",
-    ]
-    internal_keywords = [
-        "系统", "api", "erp", "sku", "库存", "仓储", "仓库", "物流", "sop", "打单",
-        "财务", "对账", "合同", "组织", "职责", "分工", "技术", "权限", "流程重构",
-    ]
-    part1_blocks: list[list[str]] = []
-    part2_blocks: list[list[str]] = []
-    internal_started = False
-    for section in sections:
-        heading = str(section.get("heading") or "")
-        section_text = str(section.get("text") or "")
-        normalized = normalize_name(section_text)
-        block = section.get("block") or []
-        is_todo = "待办" in heading
-        agency_score = sum(1 for keyword in agency_keywords if normalize_name(keyword) in normalized)
-        internal_score = sum(1 for keyword in internal_keywords if normalize_name(keyword) in normalized)
-        if is_todo:
-            part2_blocks.append(block)
-            continue
-        if not internal_started and (agency_score >= internal_score or not part1_blocks):
-            part1_blocks.append(block)
-            if internal_score > agency_score and part1_blocks[:-1]:
-                moved = part1_blocks.pop()
-                part2_blocks.append(moved)
-                internal_started = True
-        else:
-            internal_started = True
-            part2_blocks.append(block)
-
-    if not part2_blocks and len(part1_blocks) > 1:
-        part2_blocks = part1_blocks[1:]
-        part1_blocks = part1_blocks[:1]
-    marker = part2_blocks[0][0] if part2_blocks else ""
-
-    def join_part(part: str, blocks: list[list[str]]) -> str:
-        if not blocks:
+    def join_part(part: str, body: list[str]) -> str:
+        body = [line for line in body if str(line or "").strip()]
+        if not body:
             return ""
         merged = minutes_part_prefix(prefix, part)
-        for block in blocks:
-            merged.extend(block)
-            merged.append("")
+        merged.extend(body)
         return normalize_structured_meeting_minutes("\n".join(merged))
 
-    return join_part("part1", part1_blocks), join_part("part2", part2_blocks), marker
+    return (
+        join_part("part1", lines[first_content_index:split_index]),
+        join_part("part2", lines[split_index:]),
+        split_marker,
+    )
 
 
 def extract_todo_lines_from_minutes(content: str) -> list[str]:
@@ -1931,7 +1914,14 @@ def generate_part1_minutes(content: str, state: dict[str, Any]) -> str:
     source_text = str(content or "").strip()
     if looks_like_meeting_minutes_content(source_text):
         part1_minutes, _part2_minutes, _marker = split_structured_minutes_by_business_part(source_text)
-        return normalize_structured_meeting_minutes(part1_minutes or source_text)
+        if part1_minutes:
+            return normalize_structured_meeting_minutes(part1_minutes)
+        return normalize_structured_meeting_minutes(
+            "未识别到第一部分/第二部分的时间断点，系统不能把整场会议纪要直接当作第一部分。\n"
+            "请在腾讯会议AI纪要或完整原文里保留“第一部分结束 / 第二部分开始 / 内部复盘开始”等标记后重新上传。\n\n"
+            "原始AI纪要参考：\n"
+            f"{source_text}"
+        )
     raw_lines = [clean_minutes_line(line) for line in str(content or "").splitlines()]
     lines = [line for line in raw_lines if len(line) >= 8 and not looks_like_binary_text(line)]
     analysis = extract_speakers(content, state)
@@ -3080,9 +3070,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if len(part2_content.strip()) >= 10:
                 pieces.append(("part2", part2_content))
         elif selected_part == "full":
-            pieces.append(("part1", content))
-            pieces.append(("part2", content))
-            split_warning = "未识别到第一部分结束断点，已用完整文字留档；如已粘贴腾讯会议AI纪要，系统会按纪要大标题拆分第一部分纪要和第二部分行动项。"
+            if minutes_part1 and minutes_part2:
+                pieces.append(("part1", minutes_part1))
+                pieces.append(("part2", minutes_part2))
+                split_warning = "完整原文未识别到时间断点，已按腾讯会议AI纪要里的第一/第二部分时间标题拆分。"
+            else:
+                pieces.append(("part1", content))
+                split_warning = "未识别到第一部分结束或第二部分开始的时间断点，系统只生成第一部分纪要草稿，不生成第二部分行动项，避免把凯尔参与内容错分到内部复盘。请在原文或AI纪要里保留“第一部分结束/第二部分开始”这类标记后重新上传。"
         else:
             pieces.append((selected_part, content))
         records: list[dict[str, Any]] = []
@@ -3118,7 +3112,7 @@ class AppHandler(BaseHTTPRequestHandler):
             state["transcript_uploads"].append(record)
             records.append(record)
             if part == "part2":
-                action_source = minutes_part2 or minutes_content or part_content
+                action_source = minutes_part2 or part_content
                 draft_filename = f"{filename or '腾讯会议'} / AI纪要" if minutes_content else filename
                 drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, action_source, draft_filename))
         if not records:
