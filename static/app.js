@@ -53,62 +53,30 @@ const roleAgendaMap = {
 };
 
 const reportSections = [
-  ["1. 本周经营总览", [
+  ["1. 本周总览", [
     ["total_gmv", "总GMV"], ["total_orders", "总订单量"], ["aov", "平均客单价"],
     ["trend", "本周趋势", "select", ["增长", "稳定", "下降"]],
     ["core_conclusion", "核心结论", "textarea"],
   ]],
-  ["2. 直播经营结果", [
+  ["2. 直播数据（周汇总）", [
     ["live_count", "直播次数"], ["live_hours", "直播总时长"], ["live_gmv", "直播GMV / 可归因GMV"],
-    ["live_orders", "直播订单量"], ["avg_viewers", "平均观看人数"], ["peak_viewers", "最高在线人数"],
-    ["conversion_rate", "转化率"], ["issue_point", "问题点", "select", ["流量", "转化", "选品", "节奏", "其他"]],
-    ["issue_other", "其他问题说明", "textarea"],
+    ["live_orders", "直播订单量"], ["auction_gmv", "拍卖GMV"], ["buy_now_gmv", "立即购买GMV"],
+    ["audience_count", "观众数"], ["exposure_count", "曝光量"], ["product_view_count", "商品浏览量"],
+    ["avg_watch_duration", "平均观看时长"], ["live_click_rate", "直播点击率"], ["sku_order_rate", "SKU订单率"],
+    ["live_summary", "直播结论/异常说明", "textarea"],
   ]],
-  ["3. 周度直播成交指标", [
-    ["auction_gmv", "拍卖GMV（本周汇总）"], ["buy_now_gmv", "立即购买GMV（本周汇总）"], ["sold_product_count", "已售商品数（本周汇总）"],
-    ["auction_product_count", "拍卖商品数（本周汇总）"], ["gmv_per_hour", "平均每小时GMV"], ["display_gpm", "展示GPM（本周平均）"],
-    ["session_trade_note", "本周直播成交结构说明", "textarea"],
-  ]],
-  ["4. 周度直播流量与互动指标", [
-    ["audience_count", "观众数（本周累计）"], ["exposure_count", "曝光量（本周累计）"], ["product_view_count", "浏览量（本周累计）"],
-    ["impression_per_hour", "平均每小时展示次数"], ["avg_watch_duration", "每次观看平均时长（本周平均）"], ["over_1min_views", "超过1分钟观看次数（本周累计）"],
-    ["live_click_rate", "直播点击率（本周平均）"], ["click_conversion_rate", "点击转化率（本周平均）"], ["preview_click_conversion_rate", "预览点击转化率（本周平均）"],
-    ["sku_order_rate", "订单率（SKU订单，本周平均）"], ["comment_rate", "评论率（本周平均）"], ["follow_rate", "关注率（本周平均）"],
-    ["share_rate", "分享率（本周平均）"], ["like_rate", "点赞率（本周平均）"],
-    ["live_session_breakdown", "重点场次/异常数据备注（可选）", "textarea"],
-  ]],
-  ["5. 非直播表现", [
+  ["3. 非直播数据（周汇总）", [
     ["non_live_gmv", "非直播GMV"], ["non_live_orders", "非直播订单量"], ["short_video_pct", "短视频占比"],
-    ["organic_pct", "自然流量占比"], ["search_pct", "搜索流量占比"],
-    ["non_live_conclusion", "结论", "select", ["强", "中", "弱"]],
+    ["organic_pct", "自然流量占比"], ["search_pct", "搜索流量占比"], ["video_count", "本周视频数"],
+    ["viral_video_count", "爆款视频数"], ["avg_views", "平均播放量"], ["affiliate_gmv", "达人带货GMV"],
+    ["non_live_conclusion", "非直播增长能力", "select", ["强", "中", "弱"]],
+    ["non_live_summary", "非直播结论/异常说明", "textarea"],
   ]],
-  ["6. 内容与增长", [
-    ["video_count", "本周视频数"], ["viral_video_count", "爆款视频数"], ["avg_views", "平均播放量"],
-    ["stable_hit", "是否有稳定爆款", "select", ["是", "否"]],
-    ["copyable", "是否可复制", "select", ["是", "否"]],
-  ]],
-  ["7. 店铺权重指标", [
-    ["product_count", "橱窗商品数量"], ["positive_rate", "好评率"], ["dsr", "动态评分DSR"],
-    ["store_conversion_rate", "转化率"], ["store_level", "店铺等级"],
-    ["weight_status", "权重状态", "select", ["上升", "稳定", "下降"]],
-  ]],
-  ["8. 活动与流量", [
-    ["campaign_applied", "报名活动数"], ["campaign_passed", "通过活动数"], ["campaign_gmv", "活动GMV"],
-    ["campaign_effect", "活动效果", "select", ["高", "中", "低"]],
-  ]],
-  ["9. 供应链与运营问题", [
-    ["out_of_stock_skus", "缺货SKU", "textarea"], ["shipment_delay", "发货延迟"], ["wrong_ship_rate", "错发率"],
-    ["live_space_issue", "直播场地问题", "textarea"], ["host_issue", "主播问题", "textarea"],
-  ]],
-  ["10. 达人/联盟", [
-    ["commission_sku_count", "佣金SKU数"], ["affiliate_gmv", "达人带货GMV"], ["contacted_creators", "主动建联人数"],
-    ["partnered_creators", "合作达人数量"], ["top_creator", "Top达人表现", "textarea"],
-  ]],
-  ["11. 下周计划", [
-    ["must_do", "必须执行", "textarea"], ["optimize_items", "优化项", "textarea"], ["pause_items", "暂停项", "textarea"],
-  ]],
-  ["12. 管理总结", [
-    ["growth_driver", "增长驱动", "textarea"], ["biggest_bottleneck", "最大瓶颈", "textarea"], ["next_key_action", "下周关键动作", "textarea"],
+  ["4. 下周重点", [
+    ["issue_point", "主要瓶颈", "select", ["流量", "转化", "选品", "节奏", "库存", "物流", "达人", "其他"]],
+    ["issue_other", "瓶颈说明", "textarea"],
+    ["must_do", "下周必须执行", "textarea"],
+    ["support_needed", "需要公司配合", "textarea"],
   ]],
 ];
 
@@ -440,6 +408,10 @@ function meetingName(id) {
 }
 
 function meetingTimestamp(meeting) {
+  if (meeting?.start_at_utc) {
+    const startAt = new Date(meeting.start_at_utc).getTime();
+    if (!Number.isNaN(startAt)) return startAt;
+  }
   if (!meeting?.us_date) return 0;
   const value = new Date(`${meeting.us_date}T${meeting.us_time || "23:59"}:00`).getTime();
   return Number.isNaN(value) ? 0 : value;
@@ -503,9 +475,8 @@ function meetingStarted(meeting) {
   if (!meeting) return false;
   if (meeting.status === "待开会") return false;
   if (meeting.status === "进行中" || meeting.status === "已开会") return true;
-  if (!meeting.us_date) return false;
-  const start = new Date(`${meeting.us_date}T${meeting.us_time || "00:00"}:00`);
-  return !Number.isNaN(start.getTime()) && Date.now() >= start.getTime();
+  const timestamp = meetingTimestamp(meeting);
+  return Boolean(timestamp) && Date.now() >= timestamp;
 }
 
 function transcriptMetricText(uploaded, meeting) {
@@ -840,8 +811,11 @@ function weeklyReportCompareHtml(reports) {
   if (!rows.length) return `<p class="muted">暂无已保存的美国代运营每周报表，保存后这里会出现对比。</p>`;
   const metrics = [
     ["total_gmv", "总GMV", "$", ""],
-    ["total_orders", "订单量", "", ""],
+    ["total_orders", "总订单量", "", ""],
     ["live_gmv", "直播GMV", "$", ""],
+    ["live_orders", "直播订单量", "", ""],
+    ["non_live_gmv", "非直播GMV", "$", ""],
+    ["non_live_orders", "非直播订单量", "", ""],
     ["auction_gmv", "拍卖GMV", "$", ""],
     ["audience_count", "观众数", "", ""],
     ["exposure_count", "曝光量", "", ""],

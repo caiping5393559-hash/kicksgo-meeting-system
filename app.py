@@ -12,13 +12,14 @@ import re
 import secrets
 import traceback
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from http import cookies
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
 
 
 BASE = Path(__file__).resolve().parent
@@ -78,6 +79,53 @@ REPORT_RATE_FIELDS = {
 
 REPORT_SECONDS_FIELDS = {"avg_watch_duration"}
 REPORT_HOURS_FIELDS = {"live_hours"}
+try:
+    PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+except Exception:
+    PACIFIC_TZ = timezone(timedelta(hours=-7))
+FIRST_REQUIRED_REPORT_DATE = datetime(2026, 6, 21).date()
+
+
+def meeting_id_for_us_date(us_date: datetime.date) -> str:
+    return f"meeting_{us_date.strftime('%Y%m%d')}"
+
+
+def weekly_meeting_record(us_date: datetime.date, created_at: str, now_la: datetime | None = None) -> dict[str, Any]:
+    now_la = now_la or datetime.now(PACIFIC_TZ)
+    start = datetime.combine(us_date, dt_time(20, 0), tzinfo=PACIFIC_TZ)
+    cn_date = us_date + timedelta(days=1)
+    required = us_date >= FIRST_REQUIRED_REPORT_DATE
+    notes = (
+        "美国代运营会前填写周报；会后上传两段腾讯会议文字记录。"
+        if required
+        else "历史会议档案；腾讯会议文字记录待导出后上传 Part 1 / Part 2。"
+    )
+    return {
+        "id": meeting_id_for_us_date(us_date),
+        "title": f"{us_date.isoformat()} Kicksgo 周会",
+        "status": "已开会" if now_la >= start else "待开会",
+        "start_at_utc": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "us_date": us_date.isoformat(),
+        "us_time": "20:00",
+        "us_timezone": "America/Los_Angeles",
+        "cn_date": cn_date.isoformat(),
+        "cn_time": "11:00",
+        "kyle_report_required": required,
+        "report_due_note": "美国代运营需在会前3-6小时完成直营店周报。" if required else "",
+        "notes": notes,
+        "created_at": created_at,
+    }
+
+
+def weekly_meeting_dates(now_la: datetime | None = None) -> tuple[datetime.date, datetime.date]:
+    now_la = now_la or datetime.now(PACIFIC_TZ)
+    today = now_la.date()
+    days_since_sunday = (today.weekday() + 1) % 7
+    this_sunday = today - timedelta(days=days_since_sunday)
+    this_sunday_start = datetime.combine(this_sunday, dt_time(20, 0), tzinfo=PACIFIC_TZ)
+    if now_la >= this_sunday_start:
+        return this_sunday, this_sunday + timedelta(days=7)
+    return this_sunday - timedelta(days=7), this_sunday
 
 
 def now_iso() -> str:
@@ -592,9 +640,9 @@ def default_state() -> dict[str, Any]:
                 "created_at": created_at,
             },
             {
-                "id": "meeting_20260622",
-                "title": "2026-06-22 Kicksgo 周会",
-                "status": "待开会",
+                "id": "meeting_20260621",
+                "title": "2026-06-21 Kicksgo 周会",
+                "status": "已开会",
                 "us_date": "2026-06-21",
                 "us_time": "20:00",
                 "us_timezone": "America/Los_Angeles",
@@ -807,6 +855,87 @@ def apply_known_person_aliases(state: dict[str, Any]) -> None:
             add_person_alias(person, alias)
 
 
+def migrate_meeting_id(state: dict[str, Any], old_id: str, new_id: str) -> None:
+    if old_id == new_id:
+        return
+    meetings = state.setdefault("meetings", [])
+    old_meeting = next((m for m in meetings if m.get("id") == old_id), None)
+    new_meeting = next((m for m in meetings if m.get("id") == new_id), None)
+    if old_meeting and new_meeting and old_meeting is not new_meeting:
+        for key, value in old_meeting.items():
+            if key not in new_meeting or new_meeting.get(key) in {"", None, []}:
+                new_meeting[key] = value
+        meetings.remove(old_meeting)
+    elif old_meeting:
+        old_meeting["id"] = new_id
+
+    for collection in ["weekly_reports", "pre_meeting_notes", "transcript_uploads", "action_drafts", "action_items"]:
+        for item in state.get(collection, []):
+            if isinstance(item, dict) and item.get("meeting_id") == old_id:
+                item["meeting_id"] = new_id
+
+
+def ensure_weekly_meetings(state: dict[str, Any], defaults: dict[str, Any]) -> None:
+    meetings = state.setdefault("meetings", [])
+    for meeting in list(meetings):
+        if meeting.get("id") == "meeting_20260622" and meeting.get("us_date") == "2026-06-21":
+            migrate_meeting_id(state, "meeting_20260622", "meeting_20260621")
+            break
+
+    now_la = datetime.now(PACIFIC_TZ)
+    last_occurred, next_upcoming = weekly_meeting_dates(now_la)
+    required_dates = {
+        datetime(2026, 6, 14).date(),
+        FIRST_REQUIRED_REPORT_DATE,
+        last_occurred,
+        next_upcoming,
+    }
+
+    by_id = {meeting.get("id"): meeting for meeting in meetings}
+    by_us_date = {meeting.get("us_date"): meeting for meeting in meetings if meeting.get("us_date")}
+    for us_date in sorted(required_dates):
+        canonical = weekly_meeting_record(us_date, state.get("created_at") or defaults.get("created_at") or now_iso(), now_la)
+        existing = by_us_date.get(canonical["us_date"]) or by_id.get(canonical["id"])
+        if existing:
+            existing.update({
+                "id": canonical["id"],
+                "title": canonical["title"],
+                "status": canonical["status"],
+                "start_at_utc": canonical["start_at_utc"],
+                "us_date": canonical["us_date"],
+                "us_time": canonical["us_time"],
+                "us_timezone": canonical["us_timezone"],
+                "cn_date": canonical["cn_date"],
+                "cn_time": canonical["cn_time"],
+                "kyle_report_required": canonical["kyle_report_required"],
+                "report_due_note": canonical["report_due_note"],
+            })
+            if not existing.get("notes") or "6.22" in str(existing.get("notes")):
+                existing["notes"] = canonical["notes"]
+        else:
+            meetings.append(canonical)
+            by_id[canonical["id"]] = canonical
+            by_us_date[canonical["us_date"]] = canonical
+
+    seen_ids: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for meeting in meetings:
+        meeting_id = str(meeting.get("id") or "")
+        if not meeting_id or meeting_id in seen_ids:
+            continue
+        seen_ids.add(meeting_id)
+        if meeting.get("us_date"):
+            try:
+                us_date = datetime.fromisoformat(str(meeting["us_date"])).date()
+                start = datetime.combine(us_date, dt_time(20, 0), tzinfo=PACIFIC_TZ)
+                meeting["status"] = "已开会" if now_la >= start else "待开会"
+            except ValueError:
+                pass
+        deduped.append(meeting)
+    deduped.sort(key=lambda meeting: str(meeting.get("us_date") or meeting.get("title") or meeting.get("id") or ""))
+    state["meetings"] = deduped
+
+
 def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(state, dict):
         state = {}
@@ -848,6 +977,7 @@ def ensure_state(state: dict[str, Any]) -> dict[str, Any]:
             meeting["report_due_note"] = str(meeting.get("report_due_note") or "").replace("凯尔", "美国代运营")
         if "凯尔" in str(meeting.get("notes") or ""):
             meeting["notes"] = str(meeting.get("notes") or "").replace("凯尔", "美国代运营")
+    ensure_weekly_meetings(state, defaults)
     state.setdefault("audit_logs", [])
     role_by_person = {
         "person_boss": ["role_partner_boss", "role_meeting_host"],
