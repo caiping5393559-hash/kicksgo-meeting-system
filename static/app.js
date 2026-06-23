@@ -1390,7 +1390,9 @@ function renderMeetingOps() {
   const records = app.data.transcript_uploads || [];
   const canUpload = canManageActions();
   const canRaw = canViewRawTranscripts();
-  const actionDrafts = (app.data.action_drafts || []).filter((draft) => draft.part !== "part1");
+  const actionMeeting = uploadMeeting || lastOccurredMeeting() || currentMeeting();
+  const actionDrafts = (app.data.action_drafts || [])
+    .filter((draft) => draft.part !== "part1" && (!actionMeeting?.id || draft.meeting_id === actionMeeting.id));
   const actions = app.data.action_items || [];
   const subtitle = canUpload
     ? "上传完整会议原文，可同时粘贴腾讯会议AI纪要；系统只按时间断点拆分第一部分和第二部分。"
@@ -1455,7 +1457,7 @@ function renderMeetingOps() {
           <h2>第二段行动项管理</h2>
           <p class="hint">第二段会议文字上传后会生成行动项初版。可以逐行新增、修改、删除；点击“保存正式发布”后会分发到责任人的“我的行动项”。发布后仍然可以继续修改，再次点击“保存正式发布”会更新责任人行动项，不会重复生成。</p>
         </div>
-        ${renderActionDrafts(actionDrafts)}
+        ${renderActionDrafts(actionDrafts, actionMeeting)}
         <div class="panel">
           <h2>已发布行动项</h2>
           <p class="hint">正式行动项的内容从上方对应草稿修改，再点“保存正式发布”同步更新到负责人。这里保留删除入口，避免两套地方同时改造成混乱。</p>
@@ -1658,8 +1660,7 @@ function draftItemRowHtml(item = {}, index = 0) {
   `;
 }
 
-function emptyActionDraft() {
-  const meeting = currentMeeting();
+function emptyActionDraft(meeting = lastOccurredMeeting() || currentMeeting()) {
   return {
     id: "",
     title: "新增会议行动项初稿",
@@ -1671,9 +1672,9 @@ function emptyActionDraft() {
   };
 }
 
-function renderActionDrafts(drafts) {
+function renderActionDrafts(drafts, meeting = lastOccurredMeeting() || currentMeeting()) {
   if (!drafts.length) {
-    drafts = [emptyActionDraft()];
+    drafts = [emptyActionDraft(meeting)];
   }
   return drafts.map((draft) => `
     <div class="panel draft-card" data-draft-id="${escapeHtml(draft.id)}" data-transcript-id="${escapeHtml(draft.transcript_id || "")}" data-meeting-id="${escapeHtml(draft.meeting_id || "")}" data-part="${escapeHtml(draft.part || "part2")}">
