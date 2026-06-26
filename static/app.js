@@ -1119,7 +1119,7 @@ function renderDashboard() {
             <table>
               <thead><tr><th>事项</th><th>负责人</th><th>状态</th><th>截止</th></tr></thead>
               <tbody>
-                ${previousActions.slice(0, 10).map((a) => `
+                ${previousActions.map((a) => `
                   <tr><td>${escapeHtml(a.title)}</td><td>${escapeHtml(personName(a.owner_person_id) || a.owner_text)}</td><td>${escapeHtml(a.status)}</td><td>${escapeHtml(a.due_date)}</td></tr>
                 `).join("") || '<tr><td colspan="4" class="muted">暂无上周行动项</td></tr>'}
               </tbody>
