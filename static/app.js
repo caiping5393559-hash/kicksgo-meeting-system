@@ -396,6 +396,30 @@ function meetingName(id) {
   return meeting ? meeting.title : id || "";
 }
 
+function noteDraftKey(meetingId, personId = app.user?.person_id) {
+  if (!meetingId || !personId) return "";
+  return `kicksgo:pre-meeting-note:${personId}:${meetingId}`;
+}
+
+function readLocalDraft(key) {
+  if (!key) return "";
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLocalDraft(key, value) {
+  if (!key) return;
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    // Local draft backup is best-effort only.
+  }
+}
+
 function meetingTimestamp(meeting) {
   if (meeting?.start_at_utc) {
     const startAt = new Date(meeting.start_at_utc).getTime();
@@ -1338,6 +1362,22 @@ function renderNotes() {
   const meeting = currentMeeting();
   const notes = app.data.pre_meeting_notes || [];
   const ownNote = notes.find((note) => note.meeting_id === meeting?.id && note.person_id === app.user.person_id) || {};
+  const draftKey = noteDraftKey(meeting?.id);
+  const localDraft = readLocalDraft(draftKey);
+  const currentValue = ownNote.question || localDraft;
+  const ownHistory = notes
+    .filter((note) => note.person_id === app.user.person_id && note.meeting_id !== meeting?.id)
+    .sort((a, b) => {
+      const meetingA = (app.data?.meetings || []).find((m) => m.id === a.meeting_id);
+      const meetingB = (app.data?.meetings || []).find((m) => m.id === b.meeting_id);
+      return (meetingTimestamp(meetingB) || 0) - (meetingTimestamp(meetingA) || 0);
+    });
+  const savedStatus = ownNote.id
+    ? `<span class="tag green">本周已保存到数据库：${escapeHtml(ownNote.updated_at || ownNote.created_at || "")}</span>`
+    : `<span class="tag amber">本周还没有保存到数据库</span>`;
+  const localDraftStatus = localDraft && localDraft !== (ownNote.question || "")
+    ? `<span class="tag amber">浏览器里有未提交草稿</span>`
+    : "";
   setTitle("会前备注", "每个人只需要提前写下本周例会上想提出的问题，会上再讨论负责人和解决方式。");
   qs("#content").innerHTML = `
     <div class="grid">
@@ -1351,35 +1391,81 @@ function renderNotes() {
         </div>
         <input type="hidden" name="id" value="${escapeHtml(ownNote.id || "")}" />
         <input type="hidden" name="meeting_id" value="${escapeHtml(meeting?.id || "")}" />
-        <label>我想在会上提出的问题<textarea name="question" required placeholder="只写你要上会提的问题。负责人、解决方式和行动项，会上讨论后再定。">${escapeHtml(ownNote.question || "")}</textarea></label>
+        <label>我想在会上提出的问题<textarea id="noteQuestion" name="question" required data-draft-key="${escapeHtml(draftKey)}" placeholder="只写你要上会提的问题。负责人、解决方式和行动项，会上讨论后再定。">${escapeHtml(currentValue || "")}</textarea></label>
+        <div class="note-save-state">${savedStatus}${localDraftStatus}</div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">保存备注</button>
           <span id="noteMessage" class="message"></span>
         </div>
+        <p class="hint">保存后系统会重新读取数据库确认；如果网络失败，输入内容会先临时保存在当前浏览器，不会因为刷新立刻丢失。</p>
       </form>
       <div class="panel">
         <h2>显示位置</h2>
         <p class="hint">保存后的内容会出现在周会首页“内部经营复盘会流程”对应业务角色行里，鼠标移到“会前备注”标签上可以查看填写人和完整内容。</p>
       </div>
+      <div class="panel">
+        <h2>我的历史会前备注</h2>
+        <p class="hint">历史备注不会自动带到本周。需要沿用时，点“复制到本周输入框”，再修改并保存。</p>
+        <div class="note-history-list">
+          ${ownHistory.map((note) => `
+            <div class="note-history-item">
+              <div class="note-history-meta">
+                <strong>${escapeHtml(meetingName(note.meeting_id) || note.meeting_id)}</strong>
+                <span>${escapeHtml(note.updated_at || note.created_at || "")}</span>
+              </div>
+              <p>${escapeHtml(note.question || "")}</p>
+              <button type="button" class="plain-btn copy-note-to-current" data-note-id="${escapeHtml(note.id)}">复制到本周输入框</button>
+            </div>
+          `).join("") || '<p class="muted">暂无历史会前备注。</p>'}
+        </div>
+      </div>
     </div>
   `;
   qs("#noteForm").addEventListener("submit", saveNote);
+  qs("#noteQuestion")?.addEventListener("input", (event) => {
+    writeLocalDraft(event.currentTarget.dataset.draftKey || "", event.currentTarget.value);
+    showMessage("#noteMessage", "草稿已临时保存在本机，记得点“保存备注”提交到数据库。", true);
+  });
+  document.querySelectorAll(".copy-note-to-current").forEach((button) => {
+    button.addEventListener("click", () => {
+      const note = notes.find((item) => item.id === button.dataset.noteId);
+      const textarea = qs("#noteQuestion");
+      if (!note || !textarea) return;
+      textarea.value = note.question || "";
+      writeLocalDraft(textarea.dataset.draftKey || "", textarea.value);
+      textarea.focus();
+      showMessage("#noteMessage", "已复制到本周输入框，请确认内容后点击“保存备注”。", true);
+      textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
 }
 
 async function saveNote(event) {
   event.preventDefault();
   const done = setBusy(submitButton(event.currentTarget));
   showMessage("#noteMessage", "保存中...", true);
+  const formEl = event.currentTarget;
   const form = new FormData(event.currentTarget);
   const body = Object.fromEntries(form.entries());
   body.person_id = body.person_id || app.user.person_id;
+  const draftKey = formEl.querySelector("#noteQuestion")?.dataset.draftKey || noteDraftKey(body.meeting_id, body.person_id);
+  writeLocalDraft(draftKey, body.question || "");
   try {
     const res = await api("/api/notes/save", { method: "POST", body });
     upsertById("pre_meeting_notes", res.note);
+    await refresh();
+    const verified = (app.data.pre_meeting_notes || []).find((note) => {
+      if (res.note?.id && note.id === res.note.id) return true;
+      return note.meeting_id === body.meeting_id && note.person_id === body.person_id;
+    });
+    if (!verified) {
+      throw new Error("保存请求已返回，但重新读取数据库没有找到这条备注。内容已保存在本机草稿，请稍后再点保存。");
+    }
+    writeLocalDraft(draftKey, "");
     renderNotes();
-    setTimeout(() => showMessage("#noteMessage", "已保存备注", true), 0);
+    setTimeout(() => showMessage("#noteMessage", `已保存到数据库：${verified.updated_at || ""}`, true), 0);
   } catch (err) {
-    showMessage("#noteMessage", err.message);
+    showMessage("#noteMessage", `${err.message}；当前输入已临时保存在本机草稿。`);
   } finally {
     done();
   }

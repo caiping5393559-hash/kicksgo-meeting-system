@@ -132,6 +132,42 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def meeting_start_la(meeting: dict[str, Any]) -> datetime | None:
+    start_at = str(meeting.get("start_at_utc") or "").strip()
+    if start_at:
+        try:
+            return datetime.fromisoformat(start_at.replace("Z", "+00:00")).astimezone(PACIFIC_TZ)
+        except ValueError:
+            pass
+    if meeting.get("us_date"):
+        try:
+            us_date = datetime.fromisoformat(str(meeting["us_date"])).date()
+            return datetime.combine(us_date, dt_time(20, 0), tzinfo=PACIFIC_TZ)
+        except ValueError:
+            return None
+    return None
+
+
+def resolve_pre_meeting_note_meeting_id(state: dict[str, Any], requested_meeting_id: str) -> str:
+    """Save pre-meeting notes to the next meeting if a stale browser submits an old meeting id."""
+    meetings = state.get("meetings", [])
+    by_id = {str(meeting.get("id") or ""): meeting for meeting in meetings}
+    now_la = datetime.now(PACIFIC_TZ)
+    upcoming = sorted(
+        (meeting for meeting in meetings if (meeting_start_la(meeting) and meeting_start_la(meeting) > now_la)),
+        key=lambda meeting: meeting_start_la(meeting) or datetime.max.replace(tzinfo=PACIFIC_TZ),
+    )
+    if not requested_meeting_id:
+        return str(upcoming[0].get("id") or "") if upcoming else ""
+    requested = by_id.get(requested_meeting_id)
+    if not requested:
+        return str(upcoming[0].get("id") or requested_meeting_id) if upcoming else requested_meeting_id
+    requested_start = meeting_start_la(requested)
+    if requested_start and now_la >= requested_start and upcoming:
+        return str(upcoming[0].get("id") or requested_meeting_id)
+    return requested_meeting_id
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
 
@@ -2977,7 +3013,10 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_save_note(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         note_id = str(payload.get("id") or "")
-        meeting_id = str(payload.get("meeting_id") or "")
+        requested_meeting_id = str(payload.get("meeting_id") or "")
+        meeting_id = resolve_pre_meeting_note_meeting_id(state, requested_meeting_id)
+        if requested_meeting_id and meeting_id != requested_meeting_id:
+            note_id = ""
         person_id = str(payload.get("person_id") or user.get("person_id") or "")
         if not is_manager(user) and person_id != user.get("person_id"):
             person_id = str(user.get("person_id") or "")
@@ -3020,7 +3059,7 @@ class AppHandler(BaseHTTPRequestHandler):
         else:
             saved = {"id": new_id("note"), "created_at": now_iso(), **data}
             state["pre_meeting_notes"].append(saved)
-        audit(state, user, "save_note", {"meeting_id": saved["meeting_id"], "note_id": saved["id"]})
+        audit(state, user, "save_note", {"meeting_id": saved["meeting_id"], "requested_meeting_id": requested_meeting_id, "note_id": saved["id"]})
         store.save(state, "save_note")
         self.send_json({"ok": True, "note": saved})
 
