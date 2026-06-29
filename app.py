@@ -1703,6 +1703,28 @@ def split_structured_minutes_by_business_part(content: str) -> tuple[str, str, s
             split_index = index
             split_marker = lines[index].strip()
             break
+    if split_index < 0 and heading_indexes:
+        part2_keywords = [
+            "系统", "数据", "API", "api", "ERP", "erp", "接口", "自动化", "权限",
+            "仓储", "仓库", "物流", "履约", "发货", "库存", "SOP", "sop",
+            "财务", "对账", "结算", "合同", "组织", "职责", "分工", "沟通",
+            "待办", "行动项",
+        ]
+        part1_keywords = [
+            "代运营", "业务复盘", "GMV", "gmv", "直播", "非直播", "达人", "联盟",
+            "流量", "内容", "店铺", "运营策略", "业绩", "目标", "货品结构",
+        ]
+        for pos, index in enumerate(heading_indexes):
+            if index <= first_content_index:
+                continue
+            next_index = heading_indexes[pos + 1] if pos + 1 < len(heading_indexes) else len(lines)
+            section_text = "\n".join(lines[index:next_index])
+            part2_score = sum(1 for keyword in part2_keywords if keyword.lower() in section_text.lower())
+            part1_score = sum(1 for keyword in part1_keywords if keyword.lower() in section_text.lower())
+            if part2_score >= 1 and part2_score >= part1_score:
+                split_index = index
+                split_marker = f"AI纪要业务板块自动拆分：{lines[index].strip()}"
+                break
     if split_index < 0:
         return "", "", ""
 
@@ -3094,7 +3116,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if len(content) < 10:
             content = minutes_content
         meeting_id = str(payload.get("meeting_id") or "")
-        selected_part = str(payload.get("part") or "full")
+        selected_part = "full"
         minutes_part1 = ""
         minutes_part2 = ""
         minutes_split_marker = ""
@@ -3103,7 +3125,11 @@ class AppHandler(BaseHTTPRequestHandler):
         part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
         pieces: list[tuple[str, str]] = []
         split_warning = ""
-        if split_marker:
+        if minutes_part1 and minutes_part2:
+            pieces.append(("part1", minutes_part1))
+            pieces.append(("part2", minutes_part2))
+            split_warning = "已根据腾讯会议AI纪要自动拆成第一段会议纪要和第二段行动项来源。"
+        elif split_marker:
             if len(part1_content.strip()) >= 10:
                 pieces.append(("part1", part1_content))
             if len(part2_content.strip()) >= 10:

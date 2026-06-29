@@ -1483,22 +1483,22 @@ function renderMeetingOps() {
   const currentPublishedActions = actions.filter((action) => !actionMeeting?.id || action.meeting_id === actionMeeting.id);
   const historicalPublishedActions = actions.filter((action) => actionMeeting?.id && action.meeting_id !== actionMeeting.id);
   const subtitle = canUpload
-    ? "上传完整会议原文，可同时粘贴腾讯会议AI纪要；系统只按时间断点拆分第一部分和第二部分。"
-    : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一部分纪要。";
+    ? "上传一份完整会议原文和一份腾讯会议AI纪要；系统自动生成第一段会议纪要和第二段行动项草稿。"
+    : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一段纪要。";
   setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
     <div class="grid">
       ${canUpload ? `
       <form id="transcriptForm" class="panel compact-upload-panel">
         <h2>上传腾讯会议资料</h2>
-        <p class="compact-upload-hint">默认是最近一次已开会议。同一会议再次上传会覆盖旧版。请保留“第一部分结束 / 第二部分开始 / 内部复盘开始”这类时间断点；系统不会按内容关键词硬拆，避免把 Kyle 参与的前半段错放进第二部分。</p>
+        <p class="compact-upload-hint">默认是最近一次已开会议。同一会议再次上传会覆盖旧版。现在只需要上传一次：完整会议原文用于留档，腾讯会议AI纪要用于自动拆分，系统会生成第一段会议纪要和第二段行动项草稿。</p>
         <div class="form-grid two compact-upload-grid">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
           <input type="hidden" name="part" value="full" />
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
           <label class="field-wide">完整会议原文<textarea class="compact-upload-textarea raw-transcript-input" name="content" placeholder="复制腾讯会议完整文字记录，或上传文件后自动填入。"></textarea></label>
-          <label class="field-wide">腾讯会议AI纪要<textarea class="compact-upload-textarea ai-minutes-input" name="minutes_content" placeholder="把腾讯会议自动整理的会议纪要复制到这里。如果纪要里已经按时间写了第一部分/第二部分，系统会用它生成纪要和行动项；否则以完整原文里的时间断点为准。"></textarea></label>
+          <label class="field-wide">腾讯会议AI纪要<textarea class="compact-upload-textarea ai-minutes-input" name="minutes_content" placeholder="把腾讯会议自动整理的完整会议纪要复制到这里。系统会从这一份纪要里提炼第一段美国代运营会议纪要，并从第二段内部复盘内容生成行动项草稿。"></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">上传保存</button>
