@@ -1483,7 +1483,7 @@ function renderMeetingOps() {
   const currentPublishedActions = actions.filter((action) => !actionMeeting?.id || action.meeting_id === actionMeeting.id);
   const historicalPublishedActions = actions.filter((action) => actionMeeting?.id && action.meeting_id !== actionMeeting.id);
   const subtitle = canUpload
-    ? "上传一份完整会议原文和一份腾讯会议AI纪要；系统自动生成第一段会议纪要和第二段行动项草稿。"
+    ? "上传一份完整会议内容；系统自动拆分第一部分会议纪要和第二部分行动项草稿。"
     : "查看当前账号有权限访问的会议纪要；美国代运营角色只能打开第一段纪要。";
   setTitle("会议纪要与行动项", subtitle);
   qs("#content").innerHTML = `
@@ -1491,14 +1491,13 @@ function renderMeetingOps() {
       ${canUpload ? `
       <form id="transcriptForm" class="panel compact-upload-panel">
         <h2>上传腾讯会议资料</h2>
-        <p class="compact-upload-hint">默认是最近一次已开会议。同一会议再次上传会覆盖旧版。现在只需要上传一次：完整会议原文用于留档，腾讯会议AI纪要用于自动拆分，系统会生成第一段会议纪要和第二段行动项草稿。</p>
+        <p class="compact-upload-hint">默认是最近一次已开会议。同一会议再次上传会覆盖旧版。只上传一份完整会议内容即可，系统会按时间顺序拆出第一部分美国代运营纪要、第二部分内部复盘内容和行动项草稿。</p>
         <div class="form-grid two compact-upload-grid">
           <label>会议<select name="meeting_id">${meetingOptions(uploadMeeting?.id, occurredMeetings())}</select></label>
           <input type="hidden" name="part" value="full" />
           <label>文件名<input name="filename" /></label>
           <label>选择文件<input id="transcriptFile" type="file" accept=".txt,.md,.csv,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
-          <label class="field-wide">完整会议原文<textarea class="compact-upload-textarea raw-transcript-input" name="content" placeholder="复制腾讯会议完整文字记录，或上传文件后自动填入。"></textarea></label>
-          <label class="field-wide">腾讯会议AI纪要<textarea class="compact-upload-textarea ai-minutes-input" name="minutes_content" placeholder="把腾讯会议自动整理的完整会议纪要复制到这里。系统会从这一份纪要里提炼第一段美国代运营会议纪要，并从第二段内部复盘内容生成行动项草稿。"></textarea></label>
+          <label class="field-wide">完整会议内容<textarea class="compact-upload-textarea raw-transcript-input" name="content" placeholder="复制腾讯会议完整文字记录，或复制腾讯会议整理出的完整会议纪要；也可以直接上传 .docx 文件。"></textarea></label>
         </div>
         <div class="split-actions" style="margin-top:12px">
           <button type="submit">上传保存</button>
@@ -1507,7 +1506,7 @@ function renderMeetingOps() {
       </form>` : ""}
       <div class="panel">
         <h2>每周会议文字记录归档</h2>
-        <p class="muted">这里只显示已经开过的会议；每周只上传一次完整会议文字，系统内部拆分为纪要和行动项结果。</p>
+        <p class="muted">这里只显示已经开过的会议；每周只上传一次完整会议内容，系统内部拆分为纪要和行动项结果。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>会议</th><th>美国时间</th><th>第一部分纪要</th><th>第二部分行动项</th><th>处理状态</th></tr></thead>
@@ -1647,7 +1646,7 @@ async function saveTranscript(event) {
     const savedParts = [];
     if ((res.records || []).some((record) => record.part === "part1")) savedParts.push("已生成第一部分 AI 会议纪要草稿");
     if (draftItemCount) savedParts.push(`已生成第二部分 ${draftItemCount} 条行动项初稿`);
-    if (res.used_ai_minutes) savedParts.push("已优先使用腾讯会议AI纪要");
+    if (res.source_kind === "tencent_ai_minutes") savedParts.push("已识别为腾讯会议AI纪要");
     if (res.split_marker) savedParts.push(`自动断点：${res.split_marker}`);
     if (res.minutes_split_marker) savedParts.push(`纪要拆分点：${res.minutes_split_marker}`);
     if (res.split_warning) savedParts.push(res.split_warning);

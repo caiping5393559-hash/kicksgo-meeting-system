@@ -1455,6 +1455,112 @@ def split_transcript_by_part_marker(content: str) -> tuple[str, str, str]:
     return "\n".join(before).strip(), "\n".join(after).strip(), marker
 
 
+def line_keyword_score(text: str, keywords: list[str]) -> int:
+    lower = str(text or "").lower()
+    return sum(1 for keyword in keywords if keyword.lower() in lower)
+
+
+PART1_TITLE_KEYWORDS = [
+    "代运营", "业务复盘", "经营复盘", "gmv", "直播", "非直播", "达人", "联盟",
+    "流量", "内容", "店铺", "运营策略", "业绩", "目标", "货品结构", "金牌卖家",
+]
+
+PART2_TITLE_KEYWORDS = [
+    "系统", "数据治理", "api", "erp", "接口", "自动化", "权限",
+    "仓储", "仓库", "物流", "履约", "发货", "库存", "sop",
+    "财务", "对账", "结算", "合同", "组织", "职责", "分工", "沟通机制",
+    "业务流程", "流程规范", "风控", "售后",
+]
+
+PART2_BODY_KEYWORDS = [
+    *PART2_TITLE_KEYWORDS,
+    "深圳仓", "美国仓", "打单", "订单同步", "库存同步", "贴标", "打包", "未发货",
+    "异常订单", "王总", "合同丢失", "尾款", "分成", "袁继", "ronald", "诺诺",
+    "退货", "退款", "客诉",
+]
+
+PART1_BODY_KEYWORDS = [
+    *PART1_TITLE_KEYWORDS,
+    "kyle", "凯尔", "主播", "拍卖", "闪购", "flash", "客单价", "评分",
+    "银牌", "信誉分", "自然流", "短视频", "送样", "样品", "清仓", "滞销",
+]
+
+
+def is_strong_part2_heading(line: str) -> bool:
+    text = normalize_name(line)
+    if not text:
+        return False
+    if is_part2_start_marker(line):
+        return True
+    if "待办" in text or "行动项" in text:
+        return True
+    return line_keyword_score(text, PART2_TITLE_KEYWORDS) >= 1 and line_keyword_score(text, PART1_TITLE_KEYWORDS) == 0
+
+
+def is_strong_part1_heading(line: str) -> bool:
+    text = normalize_name(line)
+    if not text:
+        return False
+    return line_keyword_score(text, PART1_TITLE_KEYWORDS) >= 1 and line_keyword_score(text, PART2_TITLE_KEYWORDS) == 0
+
+
+def split_full_meeting_content_by_business_part(content: str) -> tuple[str, str, str]:
+    text = normalize_structured_meeting_minutes(content)
+    if not text:
+        return "", "", ""
+
+    part1, part2, marker = split_structured_minutes_by_business_part(text)
+    if part1 and part2:
+        return part1, part2, marker
+
+    marker_part1, marker_part2, marker = split_transcript_by_part_marker(text)
+    if marker and marker_part2.strip():
+        return marker_part1, marker_part2, marker
+
+    lines = text.splitlines()
+    meaningful_indexes = [index for index, line in enumerate(lines) if str(line or "").strip()]
+    if len(meaningful_indexes) < 12:
+        return "", "", ""
+
+    min_index = meaningful_indexes[max(1, int(len(meaningful_indexes) * 0.18))]
+    split_index = -1
+    split_marker = ""
+
+    for index in meaningful_indexes:
+        if index < min_index:
+            continue
+        line = lines[index]
+        if is_part2_start_marker(line) or (is_minutes_heading(line) and is_strong_part2_heading(line)):
+            split_index = index
+            split_marker = f"自动拆分：{line.strip()}"
+            break
+
+    if split_index < 0:
+        window_size = 10
+        for pos in range(max(1, int(len(meaningful_indexes) * 0.22)), len(meaningful_indexes)):
+            index = meaningful_indexes[pos]
+            window_indexes = meaningful_indexes[pos : pos + window_size]
+            if len(window_indexes) < 4:
+                break
+            window = "\n".join(lines[item] for item in window_indexes)
+            p2_score = line_keyword_score(window, PART2_BODY_KEYWORDS)
+            p1_score = line_keyword_score(window, PART1_BODY_KEYWORDS)
+            current_line = lines[index]
+            if p2_score >= 4 and p2_score >= p1_score + 2:
+                split_index = index
+                split_marker = f"按时间顺序自动拆分：{current_line.strip()[:80]}"
+                break
+
+    if split_index < 0:
+        return "", "", ""
+
+    before = "\n".join(lines[:split_index]).strip()
+    after = "\n".join(lines[split_index:]).strip()
+    if len(before) < 20 or len(after) < 20:
+        return "", "", ""
+    return before, after, split_marker
+
+
 def build_transcript_record(
     state: dict[str, Any],
     user: dict[str, Any],
@@ -1704,24 +1810,25 @@ def split_structured_minutes_by_business_part(content: str) -> tuple[str, str, s
             split_marker = lines[index].strip()
             break
     if split_index < 0 and heading_indexes:
-        part2_keywords = [
-            "系统", "数据", "API", "api", "ERP", "erp", "接口", "自动化", "权限",
-            "仓储", "仓库", "物流", "履约", "发货", "库存", "SOP", "sop",
-            "财务", "对账", "结算", "合同", "组织", "职责", "分工", "沟通",
-            "待办", "行动项",
-        ]
-        part1_keywords = [
-            "代运营", "业务复盘", "GMV", "gmv", "直播", "非直播", "达人", "联盟",
-            "流量", "内容", "店铺", "运营策略", "业绩", "目标", "货品结构",
-        ]
+        saw_part1_section = False
         for pos, index in enumerate(heading_indexes):
             if index <= first_content_index:
                 continue
             next_index = heading_indexes[pos + 1] if pos + 1 < len(heading_indexes) else len(lines)
+            heading_text = lines[index]
             section_text = "\n".join(lines[index:next_index])
-            part2_score = sum(1 for keyword in part2_keywords if keyword.lower() in section_text.lower())
-            part1_score = sum(1 for keyword in part1_keywords if keyword.lower() in section_text.lower())
-            if part2_score >= 1 and part2_score >= part1_score:
+            heading_part1_score = line_keyword_score(heading_text, PART1_TITLE_KEYWORDS)
+            heading_part2_score = line_keyword_score(heading_text, PART2_TITLE_KEYWORDS)
+            if heading_part1_score > heading_part2_score:
+                saw_part1_section = True
+                continue
+            if is_strong_part2_heading(heading_text) and (saw_part1_section or pos > 0):
+                split_index = index
+                split_marker = f"AI纪要业务板块自动拆分：{lines[index].strip()}"
+                break
+            part2_score = line_keyword_score(section_text, PART2_BODY_KEYWORDS)
+            part1_score = line_keyword_score(section_text, PART1_BODY_KEYWORDS)
+            if saw_part1_section and part2_score >= 4 and part2_score >= part1_score + 2:
                 split_index = index
                 split_marker = f"AI纪要业务板块自动拆分：{lines[index].strip()}"
                 break
@@ -3111,39 +3218,29 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         content = str(content or "").strip()
         if len(content) < 10 and len(minutes_content) < 10:
-            self.send_json({"ok": False, "error": "请至少粘贴完整会议原文或腾讯会议AI纪要"}, 400)
+            self.send_json({"ok": False, "error": "请粘贴或上传一份完整会议内容"}, 400)
             return
-        if len(content) < 10:
-            content = minutes_content
+        source_content = content if len(content) >= 10 else minutes_content
         meeting_id = str(payload.get("meeting_id") or "")
-        selected_part = "full"
-        minutes_part1 = ""
-        minutes_part2 = ""
-        minutes_split_marker = ""
-        if minutes_content:
-            minutes_part1, minutes_part2, minutes_split_marker = split_structured_minutes_by_business_part(minutes_content)
-        part1_content, part2_content, split_marker = split_transcript_by_part_marker(content)
+        source_is_minutes = looks_like_meeting_minutes_content(source_content)
+        part1_content, part2_content, split_marker = split_full_meeting_content_by_business_part(source_content)
         pieces: list[tuple[str, str]] = []
         split_warning = ""
-        if minutes_part1 and minutes_part2:
-            pieces.append(("part1", minutes_part1))
-            pieces.append(("part2", minutes_part2))
-            split_warning = "已根据腾讯会议AI纪要自动拆成第一段会议纪要和第二段行动项来源。"
-        elif split_marker:
-            if len(part1_content.strip()) >= 10:
-                pieces.append(("part1", part1_content))
-            if len(part2_content.strip()) >= 10:
-                pieces.append(("part2", part2_content))
-        elif selected_part == "full":
-            if minutes_part1 and minutes_part2:
-                pieces.append(("part1", minutes_part1))
-                pieces.append(("part2", minutes_part2))
-                split_warning = "完整原文未识别到时间断点，已按腾讯会议AI纪要里的第一/第二部分时间标题拆分。"
-            else:
-                pieces.append(("part1", content))
-                split_warning = "未识别到第一部分结束或第二部分开始的时间断点，系统只生成第一部分纪要草稿，不生成第二部分行动项，避免把凯尔参与内容错分到内部复盘。请在原文或AI纪要里保留“第一部分结束/第二部分开始”这类标记后重新上传。"
-        else:
-            pieces.append((selected_part, content))
+        if len(part1_content.strip()) >= 10:
+            pieces.append(("part1", part1_content))
+        if len(part2_content.strip()) >= 10:
+            pieces.append(("part2", part2_content))
+        if pieces and len(pieces) == 2:
+            split_warning = "已根据一份完整会议内容按时间顺序自动拆成第一部分会议纪要和第二部分行动项来源。"
+        if len(pieces) < 2:
+            self.send_json(
+                {
+                    "ok": False,
+                    "error": "系统没有把这份完整会议内容可靠拆成第一部分和第二部分。请确认上传的是完整会议内容，且内容里能看出美国代运营段结束后进入内部复盘。",
+                },
+                400,
+            )
+            return
         records: list[dict[str, Any]] = []
         drafts: list[dict[str, Any]] = []
         replaced: list[dict[str, Any]] = []
@@ -3162,13 +3259,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 content=part_content,
                 split_marker=split_marker,
             )
-            if minutes_content:
-                record["minutes_source"] = "tencent_ai_minutes"
-                record["minutes_source_char_count"] = len(minutes_content)
-                if minutes_split_marker:
-                    record["minutes_split_marker"] = minutes_split_marker
+            record["source_kind"] = "tencent_ai_minutes" if source_is_minutes else "full_transcript"
+            record["source_char_count"] = len(source_content)
+            if split_marker:
+                record["minutes_split_marker"] = split_marker
             if part == "part1":
-                record["minutes_draft"] = normalize_structured_meeting_minutes(minutes_part1) if minutes_part1 else generate_part1_minutes(part_content, state)
+                record["minutes_draft"] = normalize_structured_meeting_minutes(part_content) if source_is_minutes else generate_part1_minutes(part_content, state)
                 record["minutes_final"] = ""
                 record["minutes_status"] = "draft"
                 record["minutes_updated_at"] = now_iso()
@@ -3177,15 +3273,14 @@ class AppHandler(BaseHTTPRequestHandler):
             state["transcript_uploads"].append(record)
             records.append(record)
             if part == "part2":
-                action_source = minutes_part2 or part_content
-                draft_filename = f"{filename or '腾讯会议'} / AI纪要" if minutes_content else filename
-                drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, action_source, draft_filename))
+                draft_filename = f"{filename or '腾讯会议'} / 自动拆分第二部分"
+                drafts.append(create_action_draft(state, user, meeting_id, transcript_id, part, part_content, draft_filename))
         if not records:
             self.send_json({"ok": False, "error": "自动切分后没有可保存的文字内容"}, 400)
             return
-        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "minutes_split_marker": minutes_split_marker, "used_ai_minutes": bool(minutes_content), "replaced": replaced})
+        audit(state, user, "upload_transcript", {"meeting_id": meeting_id, "records": [{"part": r["part"], "id": r["id"]} for r in records], "split_marker": split_marker, "source_kind": "tencent_ai_minutes" if source_is_minutes else "full_transcript", "replaced": replaced})
         store.save(state, "upload_transcript")
-        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "minutes_split_marker": minutes_split_marker, "split_warning": split_warning, "used_ai_minutes": bool(minutes_content), "replaced": replaced})
+        self.send_json({"ok": True, "record": records[0], "records": records, "action_drafts": drafts, "split_marker": split_marker, "minutes_split_marker": split_marker, "split_warning": split_warning, "source_kind": "tencent_ai_minutes" if source_is_minutes else "full_transcript", "used_ai_minutes": source_is_minutes, "replaced": replaced})
 
     def handle_save_transcript_minutes(self, state: dict[str, Any], user: dict[str, Any], payload: dict[str, Any]) -> None:
         if not can_manage_actions(user):
